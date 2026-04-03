@@ -557,9 +557,11 @@ async function onPhotoSelected(e) {
     // 4. Apply to the card on screen
     applyPhotoToCard(cardId, url);
 
-    // 5. Refresh gallery if it's open
-    if (!document.getElementById('gallery-screen').classList.contains('hidden')) {
-      renderGallery();
+    // 5. Refresh gallery tabs if open
+    const gs = document.getElementById('gallery-screen');
+    if (gs && gs.style.display !== '' && gs.style.display !== 'none') {
+      renderGalleryMessages();
+      renderUploadGrid();
     }
 
     haptic([20, 10, 20]);
@@ -616,13 +618,15 @@ function applyPhotoToCard(cardId, url) {
 }
 
 // ============================================================
-//  GALLERY SCREEN
+//  GALLERY SCREEN — two tabs: Messages | Our Photos
 // ============================================================
+let _currentGalleryTab = 'messages';
+
 function openGallery() {
   const gallery = document.getElementById('gallery-screen');
-  renderGallery();
+  renderGalleryMessages();
+  renderUploadGrid();
   gallery.style.display = 'flex';
-  // Small timeout so display:flex is applied before transition starts
   requestAnimationFrame(() => requestAnimationFrame(() => gallery.classList.add('open')));
 }
 
@@ -632,74 +636,147 @@ function closeGallery() {
   setTimeout(() => { gallery.style.display = ''; }, 400);
 }
 
-function renderGallery() {
+function switchGalleryTab(tab) {
+  _currentGalleryTab = tab;
+  document.getElementById('tab-messages').classList.toggle('active', tab === 'messages');
+  document.getElementById('tab-photos').classList.toggle('active', tab === 'photos');
+  document.getElementById('pane-messages').classList.toggle('active', tab === 'messages');
+  document.getElementById('pane-photos').classList.toggle('active', tab === 'photos');
+  if (tab === 'photos') renderUploadGrid();
+}
+
+// ── Tab 1: Messages grid ──────────────────────────────────────
+function renderGalleryMessages() {
   const grid = document.getElementById('gallery-grid');
   if (!grid) return;
   grid.innerHTML = '';
 
   CARDS_DATA.forEach(card => {
-    const photoUrl = _photosCache[String(card.id)] || _photosCache[card.id] || card.photo || null;
+    // Priority: firebase upload > local file photo
+    const uploadedUrl = _photosCache[String(card.id)] || _photosCache[card.id] || null;
+    const staticUrl   = card.photo || null;
+    const photoUrl    = uploadedUrl || staticUrl;
+
     const isUnlocked = scratchInstances[card.id]?.completed ||
                        (!currentlyLocked.has(card.id) && CARDS_DATA.indexOf(card) < unlockedCount);
     const isLocked = !isUnlocked;
 
     const item = document.createElement('div');
-    item.className = `gallery-card ${isLocked ? 'gallery-locked' : 'gallery-unlocked'}`;
+    item.className = `gallery-card ${isLocked ? 'gallery-locked' : 'gallery-unlocked'} ${photoUrl ? 'gallery-has-photo' : ''}`;
     item.style.setProperty('--card-color', card.color);
     item.style.setProperty('--card-glow',  card.glowColor);
 
     if (isLocked) {
-      // Locked — dim placeholder
       item.innerHTML = `
         <div class="gallery-img-wrap gallery-locked-wrap">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="gallery-lock-icon"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
         </div>
         <div class="gallery-card-info">
-          <span class="gallery-card-year" style="color:var(--card-color)">${card.year}</span>
+          <span class="gallery-card-year" style="color:${card.color}">${card.year}</span>
           <span class="gallery-card-theme">Locked</span>
         </div>`;
     } else {
-      // Unlocked — show memory with photo background if available
-      const msgPreview = card.message.length > 72 ? card.message.slice(0, 72) + '…' : card.message;
+      const msgPreview = card.message.length > 68 ? card.message.slice(0, 68) + '…' : card.message;
       item.innerHTML = `
-        <div class="gallery-img-wrap gallery-memory-wrap" style="${photoUrl ? '' : 'background:linear-gradient(145deg,#1c1c30,#0f0f1e)'}">
-          ${photoUrl ? `<img src="${photoUrl}" alt="" draggable="false" loading="lazy"/>
+        <div class="gallery-img-wrap" style="${!photoUrl ? 'background:linear-gradient(145deg,#1c1c30,#0f0f1e);display:flex;align-items:center;justify-content:center;' : ''}">
+          ${photoUrl ? `<img src="${photoUrl}" alt="" draggable="false" loading="lazy" onerror="this.remove();this.nextElementSibling&&this.nextElementSibling.remove();"/>
                         <div class="gallery-img-overlay"></div>` : ''}
           <div class="gallery-memory-icon">${getRevealIcon(card.iconType)}</div>
         </div>
-        <div class="gallery-card-info gallery-card-info-memory">
-          <span class="gallery-card-year" style="color:var(--card-color)">${card.year}</span>
+        <div class="gallery-card-info">
+          <span class="gallery-card-year" style="color:${card.color}">${card.year}</span>
           <span class="gallery-card-theme-title">${card.title}</span>
           <span class="gallery-card-msg-preview">${msgPreview}</span>
-          ${!photoUrl ? `<button class="gallery-add-photo-btn" data-id="${card.id}">+ Add Photo</button>` : ''}
         </div>`;
 
-      // Tap card → open the full memory modal
-      item.addEventListener('click', (e) => {
-        // If they tapped the add photo button, handle upload instead
-        if (e.target.closest('.gallery-add-photo-btn')) {
-          e.stopPropagation();
-          const originalSlide = currentSlide;
-          const targetIndex   = CARDS_DATA.findIndex(c => c.id === card.id);
-          if (targetIndex !== -1) currentSlide = targetIndex;
-          const input = document.getElementById('album-file-input');
-          input.onchange = async (ev) => {
-            await onPhotoSelected(ev);
-            currentSlide = originalSlide;
-            input.onchange = null;
-            renderGallery(); // refresh gallery after upload
-          };
-          input.click();
-          return;
-        }
-        // Otherwise open the memory modal
+      item.addEventListener('click', () => {
         closeGallery();
         setTimeout(() => openModal(card), 300);
+      });
+    }
+    grid.appendChild(item);
+  });
+}
+
+// ── Tab 2: Upload grid ────────────────────────────────────────
+function renderUploadGrid() {
+  const grid = document.getElementById('upload-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  CARDS_DATA.forEach((card, index) => {
+    const uploadedUrl = _photosCache[String(card.id)] || _photosCache[card.id] || null;
+    const isUnlocked = scratchInstances[card.id]?.completed ||
+                       (!currentlyLocked.has(card.id) && CARDS_DATA.indexOf(card) < unlockedCount);
+
+    const item = document.createElement('div');
+    item.className = 'upload-card';
+    item.style.setProperty('--card-color', card.color);
+
+    item.innerHTML = `
+      <div class="upload-photo-area" id="upload-area-${card.id}">
+        ${uploadedUrl
+          ? `<img src="${uploadedUrl}" alt="" draggable="false" loading="lazy" onerror="this.remove()"/>
+             <div class="upload-img-overlay"></div>`
+          : `<div class="upload-empty-icon">
+               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+               <span>No photo yet</span>
+             </div>`
+        }
+      </div>
+      <div class="upload-card-label">
+        <span class="upload-card-year" style="color:${card.color}">${card.year}</span>
+        <span class="upload-card-title">${card.title}</span>
+      </div>
+      <button class="upload-btn ${!isUnlocked ? 'upload-btn-locked' : ''}" id="upload-btn-${card.id}" ${!isUnlocked ? 'disabled title="Scratch this card first"' : `title="${uploadedUrl ? 'Change photo' : 'Add a photo'}"`}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <span id="upload-btn-label-${card.id}">${!isUnlocked ? 'Locked' : uploadedUrl ? 'Change Photo' : '+ Add Photo'}</span>
+      </button>
+    `;
+
+    if (isUnlocked) {
+      const btn = item.querySelector(`#upload-btn-${card.id}`);
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        triggerUploadForCard(card, index, btn);
       });
     }
 
     grid.appendChild(item);
   });
+}
+
+function triggerUploadForCard(card, index, btn) {
+  const savedSlide = currentSlide;
+  currentSlide = index;
+  const input = document.getElementById('album-file-input');
+
+  // Show spinner
+  btn.classList.add('uploading');
+  const labelEl = document.getElementById(`upload-btn-label-${card.id}`);
+  const origLabel = labelEl ? labelEl.textContent : '';
+  if (labelEl) {
+    btn.innerHTML = `<div class="upload-spinner"></div><span>Uploading…</span>`;
+  }
+
+  input.onchange = async (ev) => {
+    if (!ev.target.files[0]) {
+      btn.classList.remove('uploading');
+      if (labelEl) btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span id="upload-btn-label-${card.id}">${origLabel}</span>`;
+      currentSlide = savedSlide;
+      input.onchange = null;
+      return;
+    }
+    try {
+      await onPhotoSelected(ev);
+      // After success, refresh both tabs
+      renderGalleryMessages();
+      renderUploadGrid();
+    } catch(e) {}
+    currentSlide = savedSlide;
+    input.onchange = null;
+  };
+  input.click();
 }
 
 // ============================================================

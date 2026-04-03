@@ -1601,7 +1601,7 @@ html, body {
   position: relative; z-index: 2;
   width: 100%;
   max-width: 540px;
-  max-height: 88vh;
+  max-height: 90vh;
   background: linear-gradient(160deg, #1a1a30 0%, #0f0f1e 100%);
   border: 1px solid rgba(255,255,255,0.09);
   border-bottom: none;
@@ -1611,14 +1611,18 @@ html, body {
   transform: translateY(40px);
   transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
   box-shadow: 0 -8px 60px rgba(0,0,0,0.6);
+  display: flex;
+  flex-direction: column;
 }
 #gallery-screen.open .gallery-panel { transform: translateY(0); }
 
+/* ── Header ── */
 .gallery-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0.35rem;
+  margin-bottom: 1rem;
+  flex-shrink: 0;
 }
 
 .gallery-header-left {
@@ -1632,14 +1636,6 @@ html, body {
   font-size: 1.1rem;
   font-weight: 700;
   color: var(--text);
-}
-
-.gallery-subtitle {
-  font-family: 'Cormorant Garamond', serif;
-  font-size: 0.82rem;
-  font-style: italic;
-  color: var(--text-muted);
-  margin-bottom: 1.2rem;
 }
 
 .gallery-close-btn {
@@ -1656,7 +1652,44 @@ html, body {
 .gallery-close-btn:hover { background: rgba(255,255,255,0.1); color: var(--text); }
 .gallery-close-btn:active { transform: scale(0.9); }
 
-/* ── Gallery 2-column grid ── */
+/* ── Tabs ── */
+.gallery-tabs {
+  display: flex;
+  gap: 0;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 100px;
+  padding: 3px;
+  margin-bottom: 1.2rem;
+  flex-shrink: 0;
+}
+.gallery-tab {
+  flex: 1;
+  padding: 0.55em 0.8em;
+  border-radius: 100px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: background 0.25s, color 0.25s;
+  display: flex; align-items: center; justify-content: center; gap: 0.4rem;
+}
+.gallery-tab svg { width: 13px; height: 13px; flex-shrink: 0; }
+.gallery-tab.active {
+  background: rgba(212,168,67,0.14);
+  color: var(--gold);
+  border: 1px solid rgba(212,168,67,0.25);
+}
+.gallery-tab:not(.active):hover { color: var(--text); }
+
+/* ── Tab panes ── */
+.gallery-pane { display: none; }
+.gallery-pane.active { display: block; }
+
+/* ── Messages grid (tab 1) ── */
 .gallery-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -1678,7 +1711,6 @@ html, body {
 .gallery-card:hover {
   transform: scale(1.03) translateY(-2px);
   box-shadow: 0 8px 30px rgba(0,0,0,0.5), 0 0 20px var(--card-glow, rgba(212,168,67,0.15));
-  border-color: rgba(var(--card-color, 212,168,67), 0.3);
 }
 .gallery-card:active { transform: scale(0.97); }
 
@@ -1690,8 +1722,7 @@ html, body {
 }
 .gallery-img-wrap img {
   width: 100%; height: 100%;
-  object-fit: cover;
-  object-position: center;
+  object-fit: cover; object-position: center;
   display: block;
   transition: transform 0.4s ease;
 }
@@ -1699,80 +1730,36 @@ html, body {
 
 .gallery-img-overlay {
   position: absolute; inset: 0;
-  background: linear-gradient(to bottom, transparent 50%, rgba(0,0,0,0.5) 100%);
+  background: linear-gradient(to bottom, transparent 40%, rgba(0,0,0,0.55) 100%);
 }
 
+/* Icon only shown when NO photo */
+.gallery-memory-icon {
+  position: absolute;
+  z-index: 2;
+  opacity: 0.5;
+  transition: opacity 0.2s, transform 0.2s;
+}
+.gallery-card:hover .gallery-memory-icon { opacity: 0.8; transform: scale(1.1); }
+/* Hide icon when photo is present */
+.gallery-has-photo .gallery-memory-icon { display: none; }
+
 .gallery-card-info {
-  padding: 0.6rem 0.7rem 0.7rem;
+  padding: 0.55rem 0.65rem 0.65rem;
   display: flex;
   flex-direction: column;
   gap: 2px;
   flex-shrink: 0;
 }
-
 .gallery-card-year {
-  font-size: 0.55rem;
+  font-size: 0.52rem;
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--card-color, var(--gold));
 }
-
-.gallery-card-theme {
-  font-family: 'Cormorant Garamond', serif;
-  font-size: 0.78rem;
-  font-style: italic;
-  color: rgba(240,234,214,0.7);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Locked card */
-.gallery-locked { opacity: 0.45; cursor: not-allowed; }
-.gallery-locked:hover { transform: none; box-shadow: none; }
-
-/* Unlocked memory card */
-.gallery-unlocked { cursor: pointer; }
-
-.gallery-locked-wrap,
-.gallery-empty-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  background: rgba(255,255,255,0.03);
-}
-
-.gallery-memory-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
-
-.gallery-memory-icon {
-  position: relative;
-  z-index: 2;
-  opacity: 0.7;
-  transition: opacity 0.2s, transform 0.2s;
-}
-.gallery-card:hover .gallery-memory-icon { opacity: 1; transform: scale(1.1); }
-
-.gallery-lock-icon {
-  width: 28px; height: 28px;
-  color: rgba(255,255,255,0.2);
-}
-
-/* Info section for memory cards */
-.gallery-card-info-memory {
-  gap: 3px;
-}
-
 .gallery-card-theme-title {
   font-family: 'Playfair Display', serif;
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   font-weight: 700;
   color: var(--text);
   line-height: 1.2;
@@ -1780,52 +1767,148 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
 .gallery-card-msg-preview {
   font-family: 'Cormorant Garamond', serif;
-  font-size: 0.65rem;
+  font-size: 0.63rem;
   font-style: italic;
-  color: rgba(240,234,214,0.45);
+  color: rgba(240,234,214,0.4);
   line-height: 1.3;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  margin-top: 1px;
 }
 
-.gallery-add-photo-btn {
-  margin-top: 5px;
-  background: rgba(212,168,67,0.1);
-  border: 1px solid rgba(212,168,67,0.3);
+/* Locked card */
+.gallery-locked { opacity: 0.4; cursor: not-allowed; }
+.gallery-locked:hover { transform: none !important; box-shadow: none !important; }
+.gallery-locked-wrap {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.02);
+}
+.gallery-lock-icon { width: 26px; height: 26px; color: rgba(255,255,255,0.18); }
+.gallery-card-theme {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 0.7rem; font-style: italic;
+  color: rgba(240,234,214,0.4);
+}
+
+/* ── Upload tab (tab 2) ── */
+.upload-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.upload-card {
+  border-radius: 16px;
+  overflow: hidden;
+  background: linear-gradient(145deg, #1c1c30, #111120);
+  border: 1px solid rgba(255,255,255,0.07);
+  aspect-ratio: 4/5;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+}
+.upload-card:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+
+/* Photo area */
+.upload-photo-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+  background: rgba(255,255,255,0.02);
+  display: flex; align-items: center; justify-content: center;
+}
+.upload-photo-area img {
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: center;
+  display: block;
+  transition: transform 0.4s ease;
+}
+.upload-card:hover .upload-photo-area img { transform: scale(1.04); }
+.upload-img-overlay {
+  position: absolute; inset: 0;
+  background: linear-gradient(to bottom, transparent 40%, rgba(0,0,0,0.5) 100%);
+  pointer-events: none;
+}
+
+/* Empty state placeholder */
+.upload-empty-icon {
+  display: flex; flex-direction: column; align-items: center; gap: 0.35rem;
+  color: rgba(212,168,67,0.3);
+  pointer-events: none;
+}
+.upload-empty-icon svg { width: 28px; height: 28px; }
+.upload-empty-icon span {
+  font-size: 0.55rem; letter-spacing: 0.12em;
+  text-transform: uppercase; color: rgba(212,168,67,0.25);
+}
+
+/* Card label row */
+.upload-card-label {
+  padding: 0.5rem 0.65rem 0;
+  flex-shrink: 0;
+}
+.upload-card-year {
+  font-size: 0.52rem; letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--card-color, var(--gold));
+  display: block;
+}
+.upload-card-title {
+  font-family: 'Playfair Display', serif;
+  font-size: 0.68rem; font-weight: 700;
+  color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: block;
+  margin-bottom: 0.45rem;
+}
+
+/* The upload button at the bottom of each upload card */
+.upload-btn {
+  display: flex; align-items: center; justify-content: center; gap: 0.4rem;
+  width: calc(100% - 1.3rem);
+  margin: 0 0.65rem 0.65rem;
+  padding: 0.55em 0.8em;
   border-radius: 100px;
+  border: 1px solid rgba(212,168,67,0.28);
+  background: rgba(212,168,67,0.08);
   color: var(--gold);
   font-family: 'DM Sans', sans-serif;
-  font-size: 0.55rem;
-  letter-spacing: 0.1em;
-  padding: 0.3em 0.8em;
+  font-size: 0.62rem; letter-spacing: 0.09em;
+  text-transform: uppercase;
   cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
-  text-transform: uppercase;
-  align-self: flex-start;
+  transition: background 0.2s, border-color 0.2s, opacity 0.2s, transform 0.1s;
+  flex-shrink: 0;
 }
-.gallery-add-photo-btn:hover { background: rgba(212,168,67,0.2); border-color: rgba(212,168,67,0.5); }
+.upload-btn:hover { background: rgba(212,168,67,0.17); border-color: rgba(212,168,67,0.5); }
+.upload-btn:active { transform: scale(0.97); }
+.upload-btn.uploading { opacity: 0.45; pointer-events: none; }
+.upload-btn svg { width: 11px; height: 11px; flex-shrink: 0; }
 
-.gallery-add-icon {
-  width: 32px; height: 32px;
-  color: rgba(212,168,67,0.4);
-  transition: color 0.2s;
+/* Uploading spinner on button */
+@keyframes spin { to { transform: rotate(360deg); } }
+.upload-spinner {
+  width: 11px; height: 11px; flex-shrink: 0;
+  border: 1.5px solid rgba(212,168,67,0.3);
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
 }
-.gallery-card:hover .gallery-add-icon { color: rgba(212,168,67,0.75); }
 
-.gallery-add-label {
-  font-size: 0.6rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(212,168,67,0.45);
-  transition: color 0.2s;
+/* Locked upload button */
+.upload-btn-locked {
+  opacity: 0.3;
+  cursor: not-allowed;
+  border-color: rgba(255,255,255,0.1);
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.03);
 }
-.gallery-card:hover .gallery-add-label { color: rgba(212,168,67,0.8); }
+.upload-btn-locked:hover { background: rgba(255,255,255,0.03) !important; border-color: rgba(255,255,255,0.1) !important; }
 
 /* ============================================================
    GALLERY LIGHTBOX
