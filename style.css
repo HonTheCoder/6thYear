@@ -740,6 +740,46 @@ html, body {
 
 .lock-icon { width: 26px; height: 26px; color: var(--text-muted); opacity: 0.6; }
 
+/* ---- ADD PHOTO BUTTON (per card, shown after scratch) ---- */
+.card-add-photo-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  width: 100%;
+  margin-top: 0.65rem;
+  padding: 0.65em 1em;
+  background: rgba(212,168,67,0.07);
+  border: 1px solid rgba(212,168,67,0.22);
+  border-radius: 100px;
+  color: var(--gold);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition: opacity 0.4s ease, transform 0.4s cubic-bezier(0.34,1.56,0.64,1),
+              background 0.2s, border-color 0.2s;
+  flex-shrink: 0;
+}
+.card-add-photo-btn.visible {
+  opacity: 1;
+  pointer-events: all;
+  transform: translateY(0);
+}
+.card-add-photo-btn:hover {
+  background: rgba(212,168,67,0.16);
+  border-color: rgba(212,168,67,0.45);
+}
+.card-add-photo-btn:active { transform: scale(0.97); }
+.card-add-photo-btn.uploading {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 .lock-text {
   font-size: 0.6rem;
   color: var(--text-muted);

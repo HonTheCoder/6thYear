@@ -589,6 +589,13 @@ function applyPhotoToCard(cardId, url) {
     slot.appendChild(overlay);
   }
 
+  img.onerror = () => {
+    slot.classList.add('no-photo');
+    img.remove();
+    const ov = slot.querySelector('.photo-overlay');
+    if (ov) ov.remove();
+  };
+
   img.src = url;
   img.style.opacity = '0';
 
@@ -807,7 +814,7 @@ function renderAlbum() {
 
     const photoHTML = photoSrc
       ? `<div class="card-photo-slot" id="photo-${card.id}">
-           <img src="${photoSrc}" alt="" draggable="false"/>
+           <img src="${photoSrc}" alt="" draggable="false" onerror="this.closest('.card-photo-slot').classList.add('no-photo');this.remove();this.nextElementSibling&&this.nextElementSibling.remove();"/>
            <div class="photo-overlay"></div>
          </div>`
       : `<div class="card-photo-slot no-photo" id="photo-${card.id}"></div>`;
@@ -839,6 +846,10 @@ function renderAlbum() {
             </svg>
           </div>
         </div>
+        <button class="card-add-photo-btn ${isDone ? 'visible' : ''}" id="add-photo-btn-${card.id}" title="Add or change photo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          <span id="add-photo-label-${card.id}">${photoSrc ? 'Change Photo' : '+ Add Photo'}</span>
+        </button>
         ${isLocked ? `
         <div class="card-lock" id="lock-${card.id}">
           <span class="lock-icon">${getLockIcon()}</span>
@@ -856,6 +867,26 @@ function renderAlbum() {
     wrap3d.appendChild(badge);
     slide.appendChild(wrap3d);
     track.appendChild(slide);
+
+    // Wire up the per-card Add Photo button after DOM is inserted
+    const addPhotoBtn = document.getElementById(`add-photo-btn-${card.id}`);
+    if (addPhotoBtn) {
+      addPhotoBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const savedSlide = currentSlide;
+        currentSlide = index; // target this card for upload
+        const input = document.getElementById('album-file-input');
+        input.onchange = async (ev) => {
+          await onPhotoSelected(ev);
+          currentSlide = savedSlide;
+          input.onchange = null;
+          // Update button label
+          const lbl = document.getElementById(`add-photo-label-${card.id}`);
+          if (lbl) lbl.textContent = 'Change Photo';
+        };
+        input.click();
+      });
+    }
 
     const dot = document.createElement('div');
     dot.className = `album-dot ${index === 0 ? 'active' : ''}`;
@@ -1171,6 +1202,10 @@ async function onCardScratched(card, index) {
   const wrapper = document.getElementById(`card-wrapper-${card.id}`);
   if (wrapper) wrapper.classList.add('done');
 
+  // Reveal the Add Photo button on the card
+  const addPhotoBtn = document.getElementById(`add-photo-btn-${card.id}`);
+  if (addPhotoBtn) setTimeout(() => addPhotoBtn.classList.add('visible'), 800);
+
   // Polaroid full reveal
   const photoSlot = document.getElementById(`photo-${card.id}`);
   if (photoSlot?.querySelector('img')) {
@@ -1248,7 +1283,7 @@ function _populateModal(card) {
   const hasNext = cardIndex < CARDS_DATA.length - 1 && scratchInstances[CARDS_DATA[cardIndex + 1].id]?.completed;
   prevBtn.disabled = !hasPrev;
   nextBtn.disabled = !hasNext;
-  navLabel.textContent = `Memory ${cardIndex + 1} of ${unlockedCount}`;
+  navLabel.textContent = `Message ${cardIndex + 1} of ${unlockedCount}`;
 }
 
 function navigateModal(direction) {
@@ -1360,7 +1395,7 @@ function shareStory() {
 
   const title = document.createElement('div');
   title.style.cssText = 'text-align:center;color:#D4A843;font-size:22px;margin-bottom:20px;letter-spacing:0.1em;';
-  title.textContent = '6 Years, 6 Secrets';
+  title.textContent = '6 Years, 6 Messages';
   grid.appendChild(title);
 
   const row = document.createElement('div');
