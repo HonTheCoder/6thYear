@@ -667,8 +667,10 @@ function _syncFirestoreInBackground() {
         window.DB._fetchProgressDirect(),
         window.DB._fetchPhotosDirect(),
       ]);
-      // Update in-memory state only if Firestore has more/different data
-      if (freshPhotos && Array.isArray(freshPhotos) && freshPhotos.length >= _photosCache.length) {
+      // Update photos only if Firestore returns MORE than we already have
+      // Never downgrade — if we have 3 in memory and Firestore returns 0,
+      // that means the write hasn't propagated yet, so keep what we have
+      if (freshPhotos && Array.isArray(freshPhotos) && freshPhotos.length > 0 && freshPhotos.length >= _photosCache.length) {
         _photosCache = freshPhotos;
         // Re-render gallery if it's open
         const gallery = document.getElementById('gallery-screen');
@@ -747,22 +749,23 @@ async function handleCaptionSubmit(caption) {
     // 1. Upload image to ImgBB
     const url = await uploadToImgBB(file);
 
-    // 2. Build the new photo object and push it into _photosCache directly
-    //    — don't call getAllPhotos() here, it triggers a background refresh
-    //      that can race and overwrite our new entry with stale Firestore data
+    // 2. Show in UI immediately with a temp ID
     const tempId   = 'temp_' + Date.now();
     const newPhoto = { id: tempId, url, caption: caption || '', timestamp: Date.now() };
-    _photosCache.unshift(newPhoto); // show immediately
+    _photosCache.unshift(newPhoto);
 
-    // 3. Persist to DB (updates localStorage + Firestore in background)
+    // 3. AWAIT the full DB save — this ensures Firestore write finishes BEFORE
+    //    any background sync runs and reads back from Firestore
     if (window.DB) {
-      window.DB.savePhotoToAlbum(url, caption || '').then(resolvedId => {
-        // Patch the temp ID in _photosCache once Firestore gives us the real one
+      try {
+        const resolvedId = await window.DB.savePhotoToAlbum(url, caption || '');
         if (resolvedId && resolvedId !== tempId) {
           const idx = _photosCache.findIndex(p => p.id === tempId);
           if (idx !== -1) _photosCache[idx].id = resolvedId;
         }
-      }).catch(() => {});
+      } catch(e) {
+        console.error('[Upload] Firestore save failed:', e);
+      }
     }
 
     // 4. Update UI
@@ -857,7 +860,7 @@ function openGallery() {
   // so photos uploaded on another device show up without a full page refresh
   if (window.DB && window.DB._isFirestoreReady && window.DB._isFirestoreReady()) {
     window.DB._fetchPhotosDirect().then(freshPhotos => {
-      if (freshPhotos && Array.isArray(freshPhotos)) {
+      if (freshPhotos && Array.isArray(freshPhotos) && freshPhotos.length > 0) {
         _photosCache = freshPhotos;
         renderUploadGrid();
         updateGalleryBadge();
