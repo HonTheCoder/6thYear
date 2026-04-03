@@ -45,7 +45,7 @@
           return cached;
         },
         async getAllPhotos() {
-          const cached = readCache(CACHE_KEY_PHOTOS, {});
+          const cached = readCache(CACHE_KEY_PHOTOS, []); // Changed from {} to [] for array of album photos
           this._refreshPhotos().catch(() => {});
           return cached;
         },
@@ -65,25 +65,82 @@
         async _refreshPhotos() {
           if (!_db) return;
           try {
-            const { getDocs, collection } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
-            const snaps = await getDocs(collection(_db, 'photos'));
-            const result = {};
-            snaps.forEach(d => { result[d.id] = d.data().url; });
+            const { getDocs, collection, query, orderBy } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+            const q = query(collection(_db, 'album'), orderBy('timestamp', 'desc'));
+            const snaps = await getDocs(q);
+            const result = [];
+            snaps.forEach(d => { result.push({ id: d.id, ...d.data() }); });
             writeCache(CACHE_KEY_PHOTOS, result);
-            console.log('[DB] Photos synced to cache:', Object.keys(result).length);
-          } catch(e) {}
+            console.log('[DB] Album synced to cache:', result.length);
+            // Push real Firestore IDs to live in-memory cache in app.js
+            if (typeof window._onPhotosRefreshed === 'function') {
+              window._onPhotosRefreshed(result);
+            }
+          } catch(e) { console.error('DB._refreshPhotos:', e); }
         },
 
         // ── writes go to both cache and Firestore ──
-        async savePhoto(cardId, url) {
-          const photos = readCache(CACHE_KEY_PHOTOS, {});
-          photos[String(cardId)] = url;
+        async savePhotoToAlbum(url, caption = '') {
+          const tempId = 'temp_' + Date.now();
+          const newPhoto = { id: tempId, url, caption, timestamp: Date.now() };
+          const photos = readCache(CACHE_KEY_PHOTOS, []);
+          photos.unshift(newPhoto);
           writeCache(CACHE_KEY_PHOTOS, photos);
-          if (!_db) return;
+
+          if (!_db) return tempId;
           try {
-            const { setDoc, doc } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
-            await setDoc(doc(_db, 'photos', String(cardId)), { url }, { merge: true });
-          } catch(e) { console.error('DB.savePhoto remote:', e); }
+            const { addDoc, collection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+            const docRef = await addDoc(collection(_db, 'album'), { url, caption, timestamp: serverTimestamp() });
+            // Replace temp ID with the real Firestore document ID in cache
+            const cached = readCache(CACHE_KEY_PHOTOS, []);
+            const idx = cached.findIndex(p => p.id === tempId);
+            if (idx !== -1) {
+              cached[idx].id = docRef.id;
+              writeCache(CACHE_KEY_PHOTOS, cached);
+            }
+            // Notify app so in-memory _photosCache also gets the real ID
+            if (typeof window._onPhotoIdResolved === 'function') {
+              window._onPhotoIdResolved(tempId, docRef.id);
+            }
+            return docRef.id;
+          } catch(e) {
+            console.error('DB.savePhotoToAlbum remote:', e);
+            return tempId;
+          }
+        },
+        async deletePhotoFromAlbum(photoId) {
+          let photos = readCache(CACHE_KEY_PHOTOS, []);
+          photos = photos.filter(p => p.id !== photoId);
+          writeCache(CACHE_KEY_PHOTOS, photos);
+
+          // Also remove from in-memory cache immediately
+          if (typeof window._onPhotoCacheInvalidated === 'function') {
+            window._onPhotoCacheInvalidated();
+          }
+
+          if (!_db) return;
+          // Skip Firestore delete for temp IDs (photo never made it to Firestore)
+          if (String(photoId).startsWith('temp_')) return;
+          try {
+            const { deleteDoc, doc } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+            await deleteDoc(doc(_db, 'album', photoId));
+          } catch(e) { console.error('DB.deletePhotoFromAlbum remote:', e); }
+        },
+        async updatePhotoCaption(photoId, caption) {
+          let photos = readCache(CACHE_KEY_PHOTOS, []);
+          const idx = photos.findIndex(p => p.id === photoId);
+          if (idx !== -1) {
+            photos[idx].caption = caption;
+            writeCache(CACHE_KEY_PHOTOS, photos);
+          }
+
+          if (!_db) return;
+          // Skip Firestore update for temp IDs
+          if (String(photoId).startsWith('temp_')) return;
+          try {
+            const { updateDoc, doc } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+            await updateDoc(doc(_db, 'album', photoId), { caption });
+          } catch(e) { console.error('DB.updatePhotoCaption remote:', e); }
         },
         async saveProgress(unlockedIds, lockedIds) {
           writeCache(CACHE_KEY_PROGRESS, { unlockedIds, lockedIds });
@@ -100,6 +157,38 @@
           console.log('[DB] Firestore connected — background sync starting');
           this._refreshProgress().catch(() => {});
           this._refreshPhotos().catch(() => {});
+          // Notify bootstrap that Firestore is ready for direct fetches
+          window.dispatchEvent(new Event('firestore-ready'));
+        },
+
+        // ── used by bootstrap to check if Firestore is connected ──
+        _isFirestoreReady() { return !!_db; },
+
+        // ── direct Firestore fetches (bypass cache) — used by bootstrap ──
+        async _fetchProgressDirect() {
+          if (!_db) return null;
+          try {
+            const { getDoc, doc } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+            const snap = await getDoc(doc(_db, 'progress', 'state'));
+            if (snap.exists()) {
+              const data = snap.data();
+              writeCache(CACHE_KEY_PROGRESS, data);
+              return data;
+            }
+            return null;
+          } catch(e) { return null; }  // offline — use cache silently
+        },
+        async _fetchPhotosDirect() {
+          if (!_db) return null;
+          try {
+            const { getDocs, collection, query, orderBy } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+            const q = query(collection(_db, 'album'), orderBy('timestamp', 'desc'));
+            const snaps = await getDocs(q);
+            const result = [];
+            snaps.forEach(d => { result.push({ id: d.id, ...d.data() }); });
+            writeCache(CACHE_KEY_PHOTOS, result);
+            return result;
+          } catch(e) { return null; }  // offline — use cache silently
         }
       };
 
@@ -208,14 +297,22 @@
           <div class="game-title">Scratch to reveal our memories</div>
           <div class="slide-counter"><span id="slide-current">1</span> / <span id="slide-total">6</span></div>
         </div>
-        <!-- GALLERY BUTTON (replaces plain upload btn) -->
-        <button class="album-upload-btn" id="gallery-btn" title="View our photo gallery">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-            <rect x="3" y="3" width="18" height="18" rx="2"/>
-            <circle cx="8.5" cy="8.5" r="1.5"/>
-            <polyline points="21 15 16 10 5 21"/>
-          </svg>
-        </button>
+        <div class="game-header-actions">
+          <!-- RESET BUTTON (moved from gallery) -->
+          <button class="reset-btn" id="game-reset-btn" title="Reset all progress (keeps photos)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
+            </svg>
+          </button>
+          <!-- GALLERY BUTTON -->
+          <button class="album-upload-btn" id="gallery-btn" title="View our photo gallery">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <polyline points="21 15 16 10 5 21"/>
+            </svg>
+          </button>
+        </div>
         <!-- Hidden upload input still used by gallery / card upload -->
         <input type="file" id="album-file-input" accept="image/*" style="display:none"/>
         <!-- Legacy upload btn kept for compatibility -->
@@ -258,9 +355,15 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" style="color:var(--gold)"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
           <span class="gallery-title">Our Memories</span>
         </div>
-        <button class="gallery-close-btn" id="gallery-close-btn" title="Close gallery">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M18 6L6 18M6 6l12 12"/></svg>
-        </button>
+        <div class="gallery-header-actions">
+          <button class="gallery-add-photo-btn" id="gallery-add-photo-header-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Add Photos
+          </button>
+          <button class="gallery-close-btn" id="gallery-close-btn" title="Close gallery">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
       </div>
 
       <!-- Tabs -->
@@ -290,18 +393,28 @@
   <!-- ══════════════════════════════════
        GALLERY LIGHTBOX
   ══════════════════════════════════ -->
-  <div id="gallery-lightbox" style="display:none">
+  <div id="gallery-lightbox" class="hidden">
     <div class="lightbox-backdrop" id="lightbox-backdrop"></div>
-    <div class="lightbox-content">
-      <button class="lightbox-close" id="lightbox-close">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M18 6L6 18M6 6l12 12"/></svg>
-      </button>
-      <img id="lightbox-img" src="" alt="" draggable="false"/>
-      <div class="lightbox-info">
-        <span class="lightbox-year" id="lightbox-year"></span>
-        <span class="lightbox-theme" id="lightbox-theme"></span>
-        <span class="lightbox-title" id="lightbox-title"></span>
+    <div class="lightbox-modal">
+      <div class="lightbox-header">
+        <div class="lightbox-info">
+          <div class="lightbox-year" id="lightbox-year"></div>
+          <div class="lightbox-theme" id="lightbox-theme"></div>
+        </div>
+        <div class="lightbox-actions">
+          <button class="lightbox-action-btn edit" id="lightbox-edit-btn" title="Edit caption">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="lightbox-action-btn delete" id="lightbox-delete-btn" title="Delete memory">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+          </button>
+          <button class="lightbox-close" id="lightbox-close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
       </div>
+      <img id="lightbox-img" src="" alt="" draggable="false"/>
+      <div class="lightbox-caption" id="lightbox-title"></div>
     </div>
   </div>
 
@@ -353,6 +466,80 @@
       <div class="dialog-actions">
         <button class="dialog-btn dialog-cancel"  id="dialog-cancel">Stay here</button>
         <button class="dialog-btn dialog-confirm" id="dialog-confirm">Go back</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════
+       RESET PROGRESS MODAL (CUSTOM)
+  ══════════════════════════════════ -->
+  <div id="reset-modal" class="hidden">
+    <div class="dialog-backdrop"></div>
+    <div class="dialog-box">
+      <div class="dialog-icon" style="color:#ff4444; border-color: rgba(255,68,68,0.2); background: rgba(255,68,68,0.1);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="28" height="28"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+      </div>
+      <div class="dialog-title">Restart the story?</div>
+      <div class="dialog-message">This will relock all cards so you can scratch them again. Your <strong>uploaded photos</strong> will stay safe in the gallery.</div>
+      <div class="dialog-actions">
+        <button class="dialog-btn dialog-cancel"  id="reset-cancel">Cancel</button>
+        <button class="dialog-btn dialog-confirm" id="reset-confirm" style="background: linear-gradient(135deg, #ff4444, #cc0000); color: white;">Restart</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════
+       PHOTO CAPTION MODAL (CUSTOM)
+  ══════════════════════════════════ -->
+  <div id="caption-modal" class="hidden">
+    <div class="dialog-backdrop"></div>
+    <div class="dialog-box">
+      <div class="dialog-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="28" height="28"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      </div>
+      <div class="dialog-title">Add a memory</div>
+      <div class="dialog-message">Write a small note for this photo (optional)</div>
+      <input type="text" id="photo-caption-input" placeholder="Our date at..." style="width:100%; padding: 0.8rem; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.2); color: white; margin-bottom: 1.5rem; font-family: inherit;"/>
+      <div class="dialog-actions">
+        <button class="dialog-btn dialog-cancel" id="caption-cancel">Skip</button>
+        <button class="dialog-btn dialog-confirm" id="caption-confirm">Add Photo</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════
+       DELETE PHOTO MODAL (CUSTOM)
+  ══════════════════════════════════ -->
+  <div id="delete-modal" class="hidden">
+    <div class="dialog-backdrop"></div>
+    <div class="dialog-box">
+      <div class="dialog-icon" style="color:#ff4444; border-color: rgba(255,68,68,0.2); background: rgba(255,68,68,0.1);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="28" height="28"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+      </div>
+      <div class="dialog-title">Delete this memory?</div>
+      <div class="dialog-message">This photo will be permanently removed from your shared gallery.</div>
+      <div class="dialog-actions">
+        <button class="dialog-btn dialog-cancel"  id="delete-cancel">Keep it</button>
+        <button class="dialog-btn dialog-confirm" id="delete-confirm" style="background: linear-gradient(135deg, #ff4444, #cc0000); color: white;">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════
+       EDIT CAPTION MODAL (CUSTOM)
+  ══════════════════════════════════ -->
+  <div id="edit-modal" class="hidden">
+    <div class="dialog-backdrop"></div>
+    <div class="dialog-box">
+      <div class="dialog-icon" style="color:var(--gold); border-color: rgba(212,168,67,0.2); background: rgba(212,168,67,0.1);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="28" height="28"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      </div>
+      <div class="dialog-title">Edit memory note</div>
+      <div class="dialog-message">Update the caption for this shared photo.</div>
+      <input type="text" id="edit-caption-input" placeholder="Our date at..." style="width:100%; padding: 0.8rem; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.2); color: white; margin-bottom: 1.5rem; font-family: inherit;"/>
+      <div class="dialog-actions">
+        <button class="dialog-btn dialog-cancel" id="edit-cancel">Cancel</button>
+        <button class="dialog-btn dialog-confirm" id="edit-confirm">Save Changes</button>
       </div>
     </div>
   </div>

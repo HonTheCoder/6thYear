@@ -196,6 +196,19 @@ class ScratchCard {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this._draw();
   }
+
+  destroy() {
+    this.completed = true; // Stop any async checks
+    this.isScratching = false;
+    this.isMoving = false;
+    this._lastPos = null;
+    // Clear the canvas
+    if (this.ctx) this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    // Remove listeners (optional but good practice)
+    const c = this.canvas;
+    const newCanvas = c.cloneNode(true);
+    if (c.parentNode) c.parentNode.replaceChild(newCanvas, c);
+  }
 }
 
 // ============================================================
@@ -231,17 +244,39 @@ class Confetti {
     this.canvas.height = window.innerHeight;
     this.particles = []; this.running = true;
     for (let i = 0; i < 150; i++) {
-      const type = ['rect','circle','star'][Math.floor(Math.random() * 3)];
-      this.particles.push({
-        x: Math.random() * this.canvas.width, y: -20 - Math.random() * 60,
-        w: Math.random() * 10 + 4, h: Math.random() * 5 + 2,
-        color: colors[Math.floor(Math.random() * colors.length)],
-        rotation: Math.random() * 360, rotSpeed: (Math.random() - 0.5) * 8,
-        vx: (Math.random() - 0.5) * 5, vy: Math.random() * 5 + 2,
-        opacity: 1, type, size: Math.random() * 8 + 4,
-      });
+      this.particles.push(this._createParticle(colors));
     }
     this._animate();
+  }
+
+  shower(duration = 5000, colors = ['#D4A843', '#E05D6E', '#8B5CF6', '#4A9B6F', '#fff']) {
+    this.canvas.width  = window.innerWidth;
+    this.canvas.height = window.innerHeight;
+    this.running = true;
+    
+    const endTime = Date.now() + duration;
+    const spawn = () => {
+      if (Date.now() < endTime && this.running) {
+        for (let i = 0; i < 5; i++) {
+          this.particles.push(this._createParticle(colors));
+        }
+        setTimeout(spawn, 50);
+      }
+    };
+    spawn();
+    this._animate();
+  }
+
+  _createParticle(colors) {
+    const type = ['rect', 'circle', 'star'][Math.floor(Math.random() * 3)];
+    return {
+      x: Math.random() * this.canvas.width, y: -20 - Math.random() * 60,
+      w: Math.random() * 10 + 4, h: Math.random() * 5 + 2,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      rotation: Math.random() * 360, rotSpeed: (Math.random() - 0.5) * 8,
+      vx: (Math.random() - 0.5) * 5, vy: Math.random() * 5 + 2,
+      opacity: 1, type, size: Math.random() * 8 + 4,
+    };
   }
 
   _animate() {

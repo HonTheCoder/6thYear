@@ -16,9 +16,26 @@
 // ── ImgBB API key ──────────────────────────────────────────
 const IMGBB_API_KEY = 'fb54f76ee4dd21a3d5d4de19020c2d64';
 
-// ── Anniversary date (April 4) ─────────────────────────────
+// ── Anniversary date (April 4, 2020) ───────────────────────────
+const START_YEAR        = 2020;
 const ANNIVERSARY_MONTH = 4;  // April
 const ANNIVERSARY_DAY   = 4;
+
+function getAnniversaryYear() {
+  const now = new Date();
+  const annivThisYear = new Date(now.getFullYear(), ANNIVERSARY_MONTH - 1, ANNIVERSARY_DAY);
+  let yearCount = now.getFullYear() - START_YEAR;
+  // If it's already passed this year, it's the next anniversary year we're looking forward to
+  if (now > annivThisYear && (now.getMonth() !== ANNIVERSARY_MONTH - 1 || now.getDate() !== ANNIVERSARY_DAY)) {
+    yearCount++;
+  }
+  return yearCount;
+}
+
+function getOrdinal(n) {
+  const s = ["th", "st", "nd", "rd"], v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
 
 // ─────────────────────────────────────────────────────────────
 let unlockedCount     = 0;
@@ -30,7 +47,28 @@ let currentlyLocked   = new Set([2, 3, 4, 5, 6]);
 let currentModalIndex = -1;
 let typewriterTimer   = null;
 let musicEnabled      = false;
-let _photosCache      = {};   // cardId → url, loaded from Firebase at startup
+let _photosCache      = [];   // Array of {id, url, timestamp}
+
+// ── Keep in-memory _photosCache in sync with real Firestore IDs ──
+// Called by DB layer once addDoc resolves and we get the real doc ID
+window._onPhotoIdResolved = (tempId, realId) => {
+  const idx = _photosCache.findIndex(p => p.id === tempId);
+  if (idx !== -1) _photosCache[idx].id = realId;
+};
+// Called after a background Firestore sync so in-memory IDs are always real
+window._onPhotosRefreshed = (freshPhotos) => {
+  _photosCache = freshPhotos;
+  // Re-render the upload grid if the gallery is currently open
+  const gallery = document.getElementById('gallery-screen');
+  if (gallery && gallery.classList.contains('open')) {
+    renderUploadGrid();
+    updateGalleryBadge();
+  }
+};
+// Called on local delete so UI stays consistent
+window._onPhotoCacheInvalidated = () => {
+  // Nothing extra needed here; delete handler already filters _photosCache
+};
 
 // Album slider state
 let currentSlide = 0;
@@ -226,7 +264,7 @@ function attachClickSounds() {
       '#modal-close,#modal-backdrop,#modal-prev,#modal-next,' +
       '#album-prev,#album-next,#finale-review-btn,#finale-share-btn,' +
       '#music-btn,#album-upload-btn,#share-close-btn,#share-backdrop,.album-dot,' +
-      '#gallery-close-btn,.gallery-card';
+      '#gallery-close-btn,.gallery-card,#gallery-btn,#gallery-add-photo-header-btn,#gallery-reset-btn';
     if (e.target.closest(targets)) Audio.playClick();
   }, true);
 }
@@ -238,21 +276,26 @@ function renderAnniversaryDate() {
   const el = document.getElementById('anniversary-date');
   if (!el) return;
 
-  const now     = new Date();
+  const now      = new Date();
   const thisYear = now.getFullYear();
+  const anniv    = new Date(thisYear, ANNIVERSARY_MONTH - 1, ANNIVERSARY_DAY);
+  const todayMD  = now.getMonth() * 100 + now.getDate();
+  const annivMD  = (ANNIVERSARY_MONTH - 1) * 100 + ANNIVERSARY_DAY;
 
-  const anniv  = new Date(thisYear, ANNIVERSARY_MONTH - 1, ANNIVERSARY_DAY);
-  const todayMD = now.getMonth() * 100 + now.getDate();
-  const annivMD = (ANNIVERSARY_MONTH - 1) * 100 + ANNIVERSARY_DAY;
+  const yearCount = getAnniversaryYear();
+  const ordinal   = getOrdinal(yearCount);
+
+  // Update badge and titles throughout the site
+  updateAnniversaryText(yearCount, ordinal);
 
   const heartIcon = `<svg class="date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>`;
   const starIcon  = `<svg class="date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
   const clockIcon = `<svg class="date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
 
   if (now.getMonth() === ANNIVERSARY_MONTH - 1 && now.getDate() === ANNIVERSARY_DAY) {
-    el.innerHTML = `${starIcon}<strong>Happy Anniversary!</strong> ${heartIcon} Today is our special day`;
+    el.innerHTML = `${starIcon}<strong>Happy Anniversary!</strong> ${heartIcon} Today is our ${ordinal} year`;
     el.classList.add('is-anniversary');
-    document.title = 'Happy Anniversary';
+    document.title = `Happy ${ordinal} Anniversary`;
     return;
   }
 
@@ -266,10 +309,57 @@ function renderAnniversaryDate() {
   const msLeft   = nextAnniv - now;
   const daysLeft = Math.ceil(msLeft / (1000 * 60 * 60 * 24));
 
+  if (msLeft > 0 && msLeft < 24 * 60 * 60 * 1000) {
+    // Less than 24 hours left — start live countdown
+    startLiveCountdown(nextAnniv, el, clockIcon, heartIcon, ordinal);
+    return;
+  }
+
   if (daysLeft === 1) {
-    el.innerHTML = `${clockIcon}<strong>Tomorrow</strong> is our Anniversary ${heartIcon}`;
+    el.innerHTML = `${clockIcon}<strong>Tomorrow</strong> is our ${ordinal} Anniversary ${heartIcon}`;
   } else {
-    el.innerHTML = `${clockIcon}<strong>${daysLeft} days</strong> until our Anniversary ${heartIcon} April 4`;
+    el.innerHTML = `${clockIcon}<strong>${daysLeft} days</strong> until our ${ordinal} Anniversary ${heartIcon} April 4`;
+  }
+}
+
+function startLiveCountdown(targetDate, el, clockIcon, heartIcon, ordinal) {
+  function update() {
+    const now = new Date();
+    const diff = targetDate - now;
+
+    if (diff <= 0) {
+      renderAnniversaryDate(); // Refresh to "Today is our day" state
+      return;
+    }
+
+    const h = Math.floor(diff / (1000 * 60 * 60));
+    const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    const s = Math.floor((diff % (1000 * 60)) / 1000);
+
+    const timeStr = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    el.innerHTML = `${clockIcon}<strong>${timeStr}</strong> until our ${ordinal} Anniversary ${heartIcon}`;
+    requestAnimationFrame(() => setTimeout(update, 1000));
+  }
+  update();
+}
+
+function updateAnniversaryText(year, ordinal) {
+  // Intro badge
+  const badge = document.querySelector('.intro-badge');
+  if (badge) {
+    badge.innerHTML = `<span class="badge-dot"></span>${ordinal} Anniversary<span class="badge-dot"></span>`;
+  }
+
+  // Intro title
+  const title = document.querySelector('.intro-title');
+  if (title) {
+    title.innerHTML = `${year} Years,<br/><em>${CARDS_DATA.length} Messages</em>`;
+  }
+
+  // Finale footer (used in sharing)
+  const footerLabel = document.querySelector('.finale-badge');
+  if (footerLabel && unlockedCount >= CARDS_DATA.length) {
+    footerLabel.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>All ${CARDS_DATA.length} Messages Unlocked`;
   }
 }
 
@@ -432,8 +522,46 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('gallery-btn').addEventListener('click', openGallery);
   document.getElementById('gallery-close-btn').addEventListener('click', closeGallery);
   document.getElementById('gallery-backdrop').addEventListener('click', closeGallery);
+  document.getElementById('gallery-add-photo-header-btn').addEventListener('click', () => {
+    // Just trigger the input click directly from the user click
+    document.getElementById('album-file-input').click();
+  });
+  document.getElementById('game-reset-btn').addEventListener('click', showResetModal);
+  
+  // Custom Reset Modal listeners
+  document.getElementById('reset-cancel').addEventListener('click', hideResetModal);
+  document.getElementById('reset-confirm').addEventListener('click', confirmResetProgress);
+  
+  // Custom Delete Modal listeners
+  document.getElementById('delete-cancel').addEventListener('click', hideDeleteModal);
+  document.getElementById('delete-confirm').addEventListener('click', handleConfirmDelete);
+
+  // Custom Edit Modal listeners
+  document.getElementById('edit-cancel').addEventListener('click', hideEditModal);
+  document.getElementById('edit-confirm').addEventListener('click', handleConfirmEdit);
+  
+  // Custom Caption Modal listeners
+  document.getElementById('caption-cancel').addEventListener('click', () => handleCaptionSubmit(''));
+  document.getElementById('caption-confirm').addEventListener('click', () => {
+    const val = document.getElementById('photo-caption-input').value;
+    handleCaptionSubmit(val);
+  });
   document.getElementById('lightbox-close').addEventListener('click', closeGalleryLightbox);
   document.getElementById('lightbox-backdrop').addEventListener('click', closeGalleryLightbox);
+  
+  const lbDeleteBtn = document.getElementById('lightbox-delete-btn');
+  if (lbDeleteBtn) {
+    lbDeleteBtn.addEventListener('click', () => {
+      if (lightboxCurrentCard) showDeleteModal(lightboxCurrentCard.id);
+    });
+  }
+
+  const lbEditBtn = document.getElementById('lightbox-edit-btn');
+  if (lbEditBtn) {
+    lbEditBtn.addEventListener('click', () => {
+      if (lightboxCurrentCard) showEditModal(lightboxCurrentCard.id, lightboxCurrentCard.title);
+    });
+  }
 
   setupModalSwipe();
   setupAlbumSwipe();
@@ -443,7 +571,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ============================================================
-//  BOOTSTRAP — instant from cache, bar tied to real steps
+//  BOOTSTRAP — waits for Firestore data (with timeout fallback)
 // ============================================================
 async function bootstrapFromFirebase() {
   showLoadingScreen();
@@ -454,53 +582,57 @@ async function bootstrapFromFirebase() {
     if (el) el.textContent = t;
   };
 
-  function setBar(pct, duration = 0.35) {
+  function setBar(pct, duration = 0.3) {
     if (!fill) return;
     fill.style.transition = `width ${duration}s ease`;
     fill.style.width = pct + '%';
   }
 
-  // Step 1 — start
-  setBar(15);
+  // Step 1: Read from localStorage instantly — no network call
+  setBar(30);
   setText('Loading our story…');
 
-  await new Promise(r => setTimeout(r, 120)); // tiny breath so bar is visible
+  let progress = { unlockedIds: [], lockedIds: [2,3,4,5,6] };
+  let photos   = [];
 
   try {
-    // Step 2 — load data (instant from cache)
-    setBar(50);
-    const [progress, photos] = await Promise.all([
-      window.DB.getProgress(),
-      window.DB.getAllPhotos(),
-    ]);
-    const unlockedIds = progress.unlockedIds || [];
-    const lockedIds   = progress.lockedIds   || [2,3,4,5,6];
-    currentlyLocked   = new Set(lockedIds);
-    unlockedCount     = unlockedIds.length;
-    _photosCache      = photos;
-  } catch(e) {
-    console.warn('Bootstrap failed, using defaults:', e);
-    _photosCache = {};
-  }
+    const rawProgress = localStorage.getItem('ann_progress_v1');
+    if (rawProgress) progress = JSON.parse(rawProgress);
+  } catch(e) {}
 
-  // Step 3 — preparing visuals
+  try {
+    const rawPhotos = localStorage.getItem('ann_photos_v1');
+    if (rawPhotos) {
+      const p = JSON.parse(rawPhotos);
+      if (Array.isArray(p)) photos = p;
+    }
+  } catch(e) {}
+
   setBar(80);
-  setText('Almost ready…');
-  await new Promise(r => setTimeout(r, 200));
-
-  // Step 4 — done
-  setBar(100, 0.3);
   setText('Ready ♡');
 
-  // Reveal the tap hint after bar finishes
+  // Apply state immediately
+  const unlockedIds = progress.unlockedIds || [];
+  const lockedIds   = progress.lockedIds   || [2,3,4,5,6];
+  currentlyLocked   = new Set(lockedIds);
+  unlockedCount     = unlockedIds.length;
+  _photosCache      = photos;
+
+  unlockedIds.forEach(id => {
+    scratchInstances[id] = { completed: true };
+  });
+
+  setBar(100, 0.2);
+
   const tapHint = document.getElementById('loading-tap-hint');
   if (tapHint) {
-    setTimeout(() => { tapHint.style.transition = 'opacity 0.5s'; tapHint.style.opacity = '1'; }, 350);
+    tapHint.style.transition = 'opacity 0.5s';
+    tapHint.style.opacity = '1';
   }
 
-  await new Promise(r => setTimeout(r, 500)); // let bar + hint settle visually
+  // Tiny delay just for the bar to visually finish
+  await new Promise(r => setTimeout(r, 300));
 
-  // Now hide loading and show intro
   hideLoadingScreen();
 
   spawnPetals();
@@ -509,22 +641,66 @@ async function bootstrapFromFirebase() {
     type: 'mixed', speed: 0.28, size: 2.8,
   });
 
-  // Show intro after loading screen starts fading
   setTimeout(() => {
     const introScreen = document.getElementById('intro-screen');
     introScreen.classList.remove('hidden');
     introScreen.classList.add('fade-in');
   }, 300);
+
+  // Step 2: Sync Firestore silently in the background AFTER the app is showing
+  // This updates localStorage cache for next visit — never blocks the UI
+  _syncFirestoreInBackground();
+}
+
+function _syncFirestoreInBackground() {
+  // Wait for Firestore to connect (up to 8s), then quietly update the cache
+  const waitAndSync = async () => {
+    if (!window.DB) return;
+    const ready = await new Promise(resolve => {
+      if (window.DB._isFirestoreReady && window.DB._isFirestoreReady()) { resolve(true); return; }
+      const timer = setTimeout(() => resolve(false), 8000);
+      window.addEventListener('firestore-ready', () => { clearTimeout(timer); resolve(true); }, { once: true });
+    });
+    if (!ready) return;
+    try {
+      const [freshProgress, freshPhotos] = await Promise.all([
+        window.DB._fetchProgressDirect(),
+        window.DB._fetchPhotosDirect(),
+      ]);
+      // Update in-memory state only if Firestore has more/different data
+      if (freshPhotos && Array.isArray(freshPhotos) && freshPhotos.length >= _photosCache.length) {
+        _photosCache = freshPhotos;
+        // Re-render gallery if it's open
+        const gallery = document.getElementById('gallery-screen');
+        if (gallery && gallery.classList.contains('open')) {
+          renderUploadGrid();
+          updateGalleryBadge();
+        }
+      }
+      if (freshProgress) {
+        // Only update progress if Firestore shows MORE unlocked (never downgrade)
+        const fsUnlocked = freshProgress.unlockedIds || [];
+        if (fsUnlocked.length > unlockedCount) {
+          currentlyLocked = new Set(freshProgress.lockedIds || []);
+          unlockedCount   = fsUnlocked.length;
+          fsUnlocked.forEach(id => { scratchInstances[id] = { completed: true }; });
+        }
+      }
+    } catch(e) { /* offline — that's fine, cache is already correct */ }
+  };
+  waitAndSync();
 }
 
 // ============================================================
-//  PHOTO UPLOAD — ImgBB → Firestore → card
+//  PHOTO UPLOAD — ImgBB → Firestore → album
 // ============================================================
+let _pendingFile = null;
+
+let _originalHeaderContent = '';
+
 async function onPhotoSelected(e) {
-  const file   = e.target.files[0];
+  const file = e.target.files[0];
   if (!file) return;
-  const cardId = CARDS_DATA[currentSlide]?.id;
-  if (!cardId) return;
 
   // Validate file type
   if (!file.type.startsWith('image/')) {
@@ -533,47 +709,91 @@ async function onPhotoSelected(e) {
     return;
   }
 
-  // Show spinner on upload button
-  const btn = document.getElementById('album-upload-btn');
-  btn.classList.add('uploading');
-  btn.disabled = true;
-
-  try {
-    console.log(`[Upload] Starting upload for card ${cardId}...`);
-
-    // 1. Upload image to ImgBB → get permanent URL
-    const url = await uploadToImgBB(file);
-    console.log(`[Upload] ImgBB URL:`, url);
-
-    // 2. Save URL to Firestore
-    if (window.DB) {
-      await window.DB.savePhoto(cardId, url);
-      console.log(`[DB] Saved photo for card ${cardId}`);
-    }
-
-    // 3. Update local cache
-    _photosCache[String(cardId)] = url;
-
-    // 4. Apply to the card on screen
-    applyPhotoToCard(cardId, url);
-
-    // 5. Refresh gallery tabs if open
-    const gs = document.getElementById('gallery-screen');
-    if (gs && gs.style.display !== '' && gs.style.display !== 'none') {
-      renderGalleryMessages();
-      renderUploadGrid();
-    }
-
-    haptic([20, 10, 20]);
-  } catch(err) {
-    console.error('[Upload] Photo upload failed:', err);
-    alert('Photo upload failed — please check your internet and try again.\n' + err.message);
-  } finally {
-    btn.classList.remove('uploading');
-    btn.disabled = false;
+  // Capture original button HTML RIGHT NOW — before anything changes it
+  const headerBtn = document.getElementById('gallery-add-photo-header-btn');
+  if (headerBtn) {
+    _originalHeaderContent = headerBtn.innerHTML;
   }
 
+  // Store file and show custom caption modal
+  _pendingFile = file;
+  document.getElementById('photo-caption-input').value = '';
+  document.getElementById('caption-modal').classList.remove('hidden');
   e.target.value = '';
+}
+
+async function handleCaptionSubmit(caption) {
+  document.getElementById('caption-modal').classList.add('hidden');
+
+  if (!_pendingFile) {
+    _originalHeaderContent = '';
+    return;
+  }
+
+  const file = _pendingFile;
+  _pendingFile = null;
+
+  // Grab button + saved HTML right now before anything mutates it
+  const headerBtn    = document.getElementById('gallery-add-photo-header-btn');
+  const savedBtnHTML = _originalHeaderContent;
+  _originalHeaderContent = ''; // clear it immediately so it can't be reused
+
+  if (headerBtn) {
+    headerBtn.innerHTML = `<div class="upload-spinner"></div><span>Adding…</span>`;
+    headerBtn.disabled  = true;
+  }
+
+  try {
+    // 1. Upload image to ImgBB
+    const url = await uploadToImgBB(file);
+
+    // 2. Build the new photo object and push it into _photosCache directly
+    //    — don't call getAllPhotos() here, it triggers a background refresh
+    //      that can race and overwrite our new entry with stale Firestore data
+    const tempId   = 'temp_' + Date.now();
+    const newPhoto = { id: tempId, url, caption: caption || '', timestamp: Date.now() };
+    _photosCache.unshift(newPhoto); // show immediately
+
+    // 3. Persist to DB (updates localStorage + Firestore in background)
+    if (window.DB) {
+      window.DB.savePhotoToAlbum(url, caption || '').then(resolvedId => {
+        // Patch the temp ID in _photosCache once Firestore gives us the real one
+        if (resolvedId && resolvedId !== tempId) {
+          const idx = _photosCache.findIndex(p => p.id === tempId);
+          if (idx !== -1) _photosCache[idx].id = resolvedId;
+        }
+      }).catch(() => {});
+    }
+
+    // 4. Update UI
+    switchGalleryTab('photos');
+    renderUploadGrid();
+    updateGalleryBadge();
+
+    const uploadGrid = document.getElementById('upload-grid');
+    if (uploadGrid) uploadGrid.scrollTop = 0;
+    const galleryPane = document.getElementById('pane-photos');
+    if (galleryPane) galleryPane.scrollTop = 0;
+
+    const gallery = document.getElementById('gallery-screen');
+    if (gallery && !gallery.classList.contains('open')) {
+      openGallery();
+      setTimeout(() => switchGalleryTab('photos'), 100);
+    }
+
+    showUploadToast();
+    haptic([20, 10, 20]);
+
+  } catch(err) {
+    console.error('[Upload] failed:', err);
+    alert('Photo upload failed: ' + err.message);
+  } finally {
+    // Restore button — always, even on error
+    if (headerBtn) {
+      headerBtn.innerHTML = savedBtnHTML || `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Add Photos`;
+      headerBtn.disabled = false;
+    }
+  }
 }
 
 function applyPhotoToCard(cardId, url) {
@@ -624,16 +844,126 @@ let _currentGalleryTab = 'messages';
 
 function openGallery() {
   const gallery = document.getElementById('gallery-screen');
+
+  // Don't call getAllPhotos() here — it fires a background _refreshPhotos()
+  // that can race with a just-uploaded photo and wipe it from _photosCache.
+  // _photosCache is already kept up-to-date by handleCaptionSubmit and handleConfirmDelete.
+  // Only do a passive localStorage read to catch any photos written by the other device.
+  try {
+    const raw = localStorage.getItem('ann_photos_v1');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length >= _photosCache.length) {
+        _photosCache = parsed;
+      }
+    }
+  } catch(e) {}
+
   renderGalleryMessages();
   renderUploadGrid();
+  updateGalleryBadge();
   gallery.style.display = 'flex';
+  gallery.style.pointerEvents = 'all';
   requestAnimationFrame(() => requestAnimationFrame(() => gallery.classList.add('open')));
 }
 
 function closeGallery() {
   const gallery = document.getElementById('gallery-screen');
   gallery.classList.remove('open');
-  setTimeout(() => { gallery.style.display = ''; }, 400);
+  gallery.style.pointerEvents = 'none';
+  
+  // Force a redraw and clear any potential active pointer states
+  setTimeout(() => { 
+    gallery.style.display = 'none';
+    // Re-sync progress and UI just in case
+    updateProgress();
+  }, 400);
+}
+
+// ── General Upload (from gallery header) ────────────────────────
+// This function is no longer needed since onPhotoSelected handles the flow
+
+// ── Reset Progress ──────────────────────────────────────────
+function showResetModal() {
+  document.getElementById('reset-modal').classList.remove('hidden');
+}
+
+function hideResetModal() {
+  document.getElementById('reset-modal').classList.add('hidden');
+}
+
+async function confirmResetProgress() {
+  hideResetModal();
+
+  // 1. Reset progress state in memory
+  unlockedCount    = 0;
+  currentlyLocked  = new Set([2, 3, 4, 5, 6]);
+  scratchInstances = {};
+
+  // 2. Persist reset to localStorage immediately (don't wait for Firestore)
+  try { localStorage.setItem('ann_progress_v1', JSON.stringify({ unlockedIds: [], lockedIds: [2,3,4,5,6] })); } catch(e) {}
+  // Fire-and-forget to Firestore
+  if (window.DB) window.DB.saveProgress([], [2, 3, 4, 5, 6]).catch(() => {});
+
+  // 3. Hide finale / intro, show game screen
+  const finaleScreen = document.getElementById('finale-screen');
+  const introScreen  = document.getElementById('intro-screen');
+  const gameScreen   = document.getElementById('game-screen');
+
+  if (finaleScreen && !finaleScreen.classList.contains('hidden')) {
+    if (finaleParticles) { finaleParticles.stop(); finaleParticles = null; }
+    finaleScreen.classList.add('hidden');
+    finaleScreen.classList.remove('fade-in', 'fade-out');
+  }
+  if (introScreen && !introScreen.classList.contains('hidden')) {
+    introScreen.classList.add('hidden');
+    introScreen.classList.remove('fade-in', 'fade-out');
+    if (introParticles) { introParticles.stop(); introParticles = null; }
+  }
+  if (gameScreen) {
+    gameScreen.classList.remove('hidden', 'fade-out', 'fade-in');
+    // Force a reflow so the game screen is fully painted before we measure canvases
+    void gameScreen.offsetHeight;
+  }
+
+  if (!gameParticleSystem) startGameParticles();
+
+  // 4. _photosCache is already correct in memory — do NOT refetch from Firestore
+  //    (it might be offline, and the cache already has the right photos)
+  //    Only reload from localStorage as a safety net
+  try {
+    const raw = localStorage.getItem('ann_photos_v1');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) _photosCache = parsed;
+    }
+  } catch(e) {}
+
+  // 5. Rebuild the album — game screen is visible so canvas dimensions will be real
+  renderAlbum();
+
+  // 6. After a frame so the DOM has painted, go to slide 0 and re-init scratch cards
+  requestAnimationFrame(() => {
+    goToSlide(0, false);
+    updateProgress();
+  });
+
+  // 7. Refresh gallery grids
+  renderGalleryMessages();
+  renderUploadGrid();
+  updateGalleryBadge();
+
+  // 8. Success toast
+  let toastEl = document.getElementById('upload-toast');
+  if (!toastEl) {
+    toastEl = document.createElement('div');
+    toastEl.id = 'upload-toast';
+    document.body.appendChild(toastEl);
+  }
+  toastEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg> Cards reset — scratch to unlock!`;
+  toastEl.classList.add('show');
+  clearTimeout(toastEl._hideTimer);
+  toastEl._hideTimer = setTimeout(() => toastEl.classList.remove('show'), 3000);
 }
 
 function switchGalleryTab(tab) {
@@ -652,10 +982,8 @@ function renderGalleryMessages() {
   grid.innerHTML = '';
 
   CARDS_DATA.forEach(card => {
-    // Priority: firebase upload > local file photo
-    const uploadedUrl = _photosCache[String(card.id)] || _photosCache[card.id] || null;
-    const staticUrl   = card.photo || null;
-    const photoUrl    = uploadedUrl || staticUrl;
+    // Messages use STATIC photos from cards.js only
+    const photoUrl = card.photo || null;
 
     const isUnlocked = scratchInstances[card.id]?.completed ||
                        (!currentlyLocked.has(card.id) && CARDS_DATA.indexOf(card) < unlockedCount);
@@ -698,52 +1026,152 @@ function renderGalleryMessages() {
   });
 }
 
+// ============================================================
+//  UPLOAD SUCCESS TOAST
+// ============================================================
+function showUploadToast() {
+  let toast = document.getElementById('upload-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'upload-toast';
+    toast.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Photo saved!`;
+    document.body.appendChild(toast);
+  }
+  toast.classList.add('show');
+  clearTimeout(toast._hideTimer);
+  toast._hideTimer = setTimeout(() => toast.classList.remove('show'), 2800);
+}
+
 // ── Tab 2: Upload grid ────────────────────────────────────────
 function renderUploadGrid() {
   const grid = document.getElementById('upload-grid');
   if (!grid) return;
   grid.innerHTML = '';
 
-  CARDS_DATA.forEach((card, index) => {
-    const uploadedUrl = _photosCache[String(card.id)] || _photosCache[card.id] || null;
-    const isUnlocked = scratchInstances[card.id]?.completed ||
-                       (!currentlyLocked.has(card.id) && CARDS_DATA.indexOf(card) < unlockedCount);
+  if (!_photosCache || _photosCache.length === 0) {
+    grid.innerHTML = `
+      <div style="grid-column: 1 / -1; text-align: center; padding: 3rem 1rem; color: var(--text-muted); font-family: 'Cormorant Garamond', serif; font-style: italic;">
+        No photos in our gallery yet.<br/>Tap "Add Photos" to start our collection.
+      </div>`;
+    return;
+  }
 
+  _photosCache.forEach((photo) => {
     const item = document.createElement('div');
-    item.className = 'upload-card';
-    item.style.setProperty('--card-color', card.color);
+    item.className = 'upload-card has-photo';
 
     item.innerHTML = `
-      <div class="upload-photo-area" id="upload-area-${card.id}">
-        ${uploadedUrl
-          ? `<img src="${uploadedUrl}" alt="" draggable="false" loading="lazy" onerror="this.remove()"/>
-             <div class="upload-img-overlay"></div>`
-          : `<div class="upload-empty-icon">
-               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-               <span>No photo yet</span>
-             </div>`
-        }
+      <div class="upload-photo-area" id="upload-area-${photo.id}">
+        <img src="${photo.url}" alt="" draggable="false" loading="lazy" onerror="this.remove()"/>
+        <div class="upload-img-overlay"></div>
+        <div class="upload-change-hint">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          <span>View Photo</span>
+        </div>
+        ${photo.caption ? `<div class="photo-caption-tag">${photo.caption}</div>` : ''}
+        <div class="photo-card-actions">
+          <button class="photo-card-btn edit" title="Edit caption">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="photo-card-btn delete" title="Delete from gallery">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+          </button>
+        </div>
       </div>
-      <div class="upload-card-label">
-        <span class="upload-card-year" style="color:${card.color}">${card.year}</span>
-        <span class="upload-card-title">${card.title}</span>
-      </div>
-      <button class="upload-btn ${!isUnlocked ? 'upload-btn-locked' : ''}" id="upload-btn-${card.id}" ${!isUnlocked ? 'disabled title="Scratch this card first"' : `title="${uploadedUrl ? 'Change photo' : 'Add a photo'}"`}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        <span id="upload-btn-label-${card.id}">${!isUnlocked ? 'Locked' : uploadedUrl ? 'Change Photo' : '+ Add Photo'}</span>
-      </button>
     `;
 
-    if (isUnlocked) {
-      const btn = item.querySelector(`#upload-btn-${card.id}`);
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        triggerUploadForCard(card, index, btn);
-      });
-    }
+    const photoArea = item.querySelector(`#upload-area-${photo.id}`);
+    photoArea.style.cursor = 'pointer';
+    photoArea.addEventListener('click', (e) => {
+      if (e.target.closest('.photo-card-btn')) return;
+      e.stopPropagation();
+      openGalleryLightbox({ id: photo.id, year: 'Gallery', theme: 'Our Memory', title: photo.caption || '' }, photo.url);
+    });
+
+    const delBtn = item.querySelector('.photo-card-btn.delete');
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showDeleteModal(photo.id);
+    });
+
+    const editBtn = item.querySelector('.photo-card-btn.edit');
+    editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showEditModal(photo.id, photo.caption || '');
+    });
 
     grid.appendChild(item);
   });
+}
+
+let _pendingDeleteId = null;
+function showDeleteModal(photoId) {
+  _pendingDeleteId = photoId;
+  document.getElementById('delete-modal').classList.remove('hidden');
+}
+function hideDeleteModal() {
+  _pendingDeleteId = null;
+  document.getElementById('delete-modal').classList.add('hidden');
+}
+async function handleConfirmDelete() {
+  if (!_pendingDeleteId) return;
+  const photoId = _pendingDeleteId;
+  hideDeleteModal();
+  
+  try {
+    if (window.DB) await window.DB.deletePhotoFromAlbum(photoId);
+    _photosCache = _photosCache.filter(p => p.id !== photoId);
+    renderUploadGrid();
+    updateGalleryBadge();
+  } catch(e) { console.error('Delete failed:', e); }
+}
+
+let _pendingEditId = null;
+function showEditModal(photoId, currentCaption) {
+  _pendingEditId = photoId;
+  const input = document.getElementById('edit-caption-input');
+  if (input) input.value = currentCaption;
+  document.getElementById('edit-modal').classList.remove('hidden');
+}
+function hideEditModal() {
+  _pendingEditId = null;
+  document.getElementById('edit-modal').classList.add('hidden');
+}
+async function handleConfirmEdit() {
+  if (!_pendingEditId) return;
+  const photoId = _pendingEditId;
+  const input = document.getElementById('edit-caption-input');
+  const newCaption = input ? input.value : '';
+  hideEditModal();
+
+  try {
+    if (window.DB) await window.DB.updatePhotoCaption(photoId, newCaption);
+    const idx = _photosCache.findIndex(p => p.id === photoId);
+    if (idx !== -1) _photosCache[idx].caption = newCaption;
+    renderUploadGrid();
+    
+    // Also update lightbox if it's open
+    const lbTitle = document.getElementById('lightbox-title');
+    if (lbTitle && lightboxCurrentCard && lightboxCurrentCard.id === photoId) {
+      lbTitle.textContent = newCaption;
+      lightboxCurrentCard.title = newCaption;
+    }
+  } catch(e) { console.error('Edit failed:', e); }
+}
+
+function updateGalleryBadge() {
+  const count = _photosCache.length;
+  const tab = document.getElementById('tab-photos');
+  if (!tab) return;
+  
+  let badge = tab.querySelector('.gallery-tab-badge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'gallery-tab-badge';
+    tab.appendChild(badge);
+  }
+  badge.textContent = count;
+  badge.style.display = count > 0 ? 'inline-flex' : 'none';
 }
 
 function triggerUploadForCard(card, index, btn) {
@@ -794,12 +1222,20 @@ function openGalleryLightbox(card, url) {
   const year  = document.getElementById('lightbox-year');
   const theme = document.getElementById('lightbox-theme');
   const title = document.getElementById('lightbox-title');
+  const delBtn = document.getElementById('lightbox-delete-btn');
+
+  // Show delete button only if it's a gallery photo (not a static message photo)
+  if (delBtn) {
+    const isGalleryPhoto = _photosCache.some(p => p.id === card.id);
+    delBtn.style.display = isGalleryPhoto ? 'flex' : 'none';
+  }
 
   img.src = url;
-  year.textContent  = card.year;
-  theme.textContent = card.theme;
-  title.textContent = card.title;
+  year.textContent  = card.year || 'Gallery';
+  theme.textContent = card.theme || 'Our Memory';
+  title.textContent = card.title || '';
 
+  lb.classList.remove('hidden');
   lb.style.display = 'flex';
   requestAnimationFrame(() => requestAnimationFrame(() => lb.classList.add('open')));
 }
@@ -807,7 +1243,12 @@ function openGalleryLightbox(card, url) {
 function closeGalleryLightbox() {
   const lb = document.getElementById('gallery-lightbox');
   lb.classList.remove('open');
-  setTimeout(() => { lb.style.display = ''; }, 350);
+  setTimeout(() => { 
+    lb.classList.add('hidden');
+    lb.style.display = 'none'; 
+    lightboxCurrentCard = null;
+    lightboxCurrentUrl = null;
+  }, 350);
 }
 
 // ============================================================
@@ -861,15 +1302,23 @@ function goBackToIntro() {
 function renderAlbum() {
   const track    = document.getElementById('album-track');
   const dotsWrap = document.getElementById('album-dots');
+  if (!track || !dotsWrap) return; // safety check
+  
   track.innerHTML    = '';
   dotsWrap.innerHTML = '';
   totalSlides = CARDS_DATA.length;
   document.getElementById('slide-total').textContent = totalSlides;
 
+  // Clear existing scratch instances — DOM is being fully rebuilt so no need to destroy()
+  scratchInstances = {};
+
   CARDS_DATA.forEach((card, index) => {
     const isLocked = currentlyLocked.has(card.id);
-    const isDone   = scratchInstances[card.id]?.completed === true ||
-                     (unlockedCount > 0 && !isLocked && index < unlockedCount);
+    const isDone   = (unlockedCount > 0 && !isLocked && index < unlockedCount);
+    
+    if (isDone) {
+      scratchInstances[card.id] = { completed: true };
+    }
 
     const slide  = document.createElement('div');
     slide.className = 'album-slide';
@@ -887,7 +1336,8 @@ function renderAlbum() {
     el.style.setProperty('--card-glow',  card.glowColor);
 
     // Use Firebase-loaded photo if available, else fall back to cards.js photo
-    const photoSrc = _photosCache[String(card.id)] || _photosCache[card.id] || card.photo || null;
+    const cachedPhoto = _photosCache.find(p => p.id === String(card.id) || p.id === card.id);
+    const photoSrc = cachedPhoto?.url || card.photo || null;
 
     const photoHTML = photoSrc
       ? `<div class="card-photo-slot" id="photo-${card.id}">
@@ -923,10 +1373,6 @@ function renderAlbum() {
             </svg>
           </div>
         </div>
-        <button class="card-add-photo-btn ${isDone ? 'visible' : ''}" id="add-photo-btn-${card.id}" title="Add or change photo">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-          <span id="add-photo-label-${card.id}">${photoSrc ? 'Change Photo' : '+ Add Photo'}</span>
-        </button>
         ${isLocked ? `
         <div class="card-lock" id="lock-${card.id}">
           <span class="lock-icon">${getLockIcon()}</span>
@@ -944,26 +1390,6 @@ function renderAlbum() {
     wrap3d.appendChild(badge);
     slide.appendChild(wrap3d);
     track.appendChild(slide);
-
-    // Wire up the per-card Add Photo button after DOM is inserted
-    const addPhotoBtn = document.getElementById(`add-photo-btn-${card.id}`);
-    if (addPhotoBtn) {
-      addPhotoBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const savedSlide = currentSlide;
-        currentSlide = index; // target this card for upload
-        const input = document.getElementById('album-file-input');
-        input.onchange = async (ev) => {
-          await onPhotoSelected(ev);
-          currentSlide = savedSlide;
-          input.onchange = null;
-          // Update button label
-          const lbl = document.getElementById(`add-photo-label-${card.id}`);
-          if (lbl) lbl.textContent = 'Change Photo';
-        };
-        input.click();
-      });
-    }
 
     const dot = document.createElement('div');
     dot.className = `album-dot ${index === 0 ? 'active' : ''}`;
@@ -1124,49 +1550,43 @@ function setup3DTilt(wrap) {
 // ============================================================
 //  SVG ICONS
 // ============================================================
+function getIcon(type, options = {}) {
+  const { width = 24, height = 24, strokeWidth = 1.5, color = 'currentColor', extraStyle = '' } = options;
+  const s = `width="${width}" height="${height}" stroke-width="${strokeWidth}" style="color:${color};${extraStyle}"`;
+  
+  const icons = {
+    heart:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ${s} stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>`,
+    star:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ${s} stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
+    smile:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ${s} stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 13s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>`,
+    moon:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ${s} stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>`,
+    feather: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ${s} stroke-linecap="round" stroke-linejoin="round"><path d="M20.24 12.24a6 6 0 00-8.49-8.49L5 10.5V19h8.5l6.74-6.76z"/><line x1="16" y1="8" x2="2" y2="22"/><line x1="17.5" y1="15" x2="9" y2="15"/></svg>`,
+    flame:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ${s} stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0011 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 01-7 7 7 7 0 01-7-7c0-1.153.433-2.294 1-3a2.5 2.5 0 002.5 2.5z"/></svg>`,
+  };
+  return icons[type] || icons.heart;
+}
+
 function getCardIcon(type) {
-  const icons = {
-    heart:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>`,
-    star:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
-    smile:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 13s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>`,
-    moon:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>`,
-    feather: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.24 12.24a6 6 0 00-8.49-8.49L5 10.5V19h8.5l6.74-6.76z"/><line x1="16" y1="8" x2="2" y2="22"/><line x1="17.5" y1="15" x2="9" y2="15"/></svg>`,
-    flame:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0011 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 01-7 7 7 7 0 01-7-7c0-1.153.433-2.294 1-3a2.5 2.5 0 002.5 2.5z"/></svg>`,
-  };
-  return icons[type] || icons.heart;
+  return getIcon(type);
 }
+
 function getRevealIcon(type) {
-  const s = `style="width:32px;height:32px;color:var(--card-color,#D4A843)"`;
-  const icons = {
-    heart:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" ${s}><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>`,
-    star:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" ${s}><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
-    smile:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" ${s}><circle cx="12" cy="12" r="10"/><path d="M8 13s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/></svg>`,
-    moon:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" ${s}><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>`,
-    feather: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" ${s}><path d="M20.24 12.24a6 6 0 00-8.49-8.49L5 10.5V19h8.5l6.74-6.76z"/><line x1="16" y1="8" x2="2" y2="22"/></svg>`,
-    flame:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" ${s}><path d="M8.5 14.5A2.5 2.5 0 0011 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 01-7 7 7 7 0 01-7-7c0-1.153.433-2.294 1-3a2.5 2.5 0 002.5 2.5z"/></svg>`,
-  };
-  return icons[type] || icons.heart;
+  return getIcon(type, { width: 32, height: 32, color: 'var(--card-color, #D4A843)' });
 }
+
 function getLockIcon() {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:26px;height:26px;color:#6B6070"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>`;
 }
+
 function getModalIcon(type) {
-  const icons = {
-    heart:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>`,
-    star:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
-    smile:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 13s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>`,
-    moon:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>`,
-    feather: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.24 12.24a6 6 0 00-8.49-8.49L5 10.5V19h8.5l6.74-6.76z"/><line x1="16" y1="8" x2="2" y2="22"/><line x1="17.5" y1="15" x2="9" y2="15"/></svg>`,
-    flame:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0011 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 01-7 7 7 7 0 01-7-7c0-1.153.433-2.294 1-3a2.5 2.5 0 002.5 2.5z"/></svg>`,
-  };
-  return icons[type] || icons.heart;
+  return getIcon(type);
 }
 
 // ============================================================
 //  INIT SCRATCH CARD
 // ============================================================
 function initScratchCard(card, index) {
-  requestAnimationFrame(() => requestAnimationFrame(() => {
+  // Use a small delay to ensure the DOM has been painted and has real dimensions
+  const _doInit = () => {
     const canvas = document.getElementById(`canvas-${card.id}`);
     const area   = document.getElementById(`scratch-area-${card.id}`);
     if (!canvas || !area) return;
@@ -1179,15 +1599,27 @@ function initScratchCard(card, index) {
       const preview = document.getElementById(`reveal-${card.id}`);
       if (preview) {
         preview.style.cursor = 'pointer';
-        preview.addEventListener('click', () => openModal(card));
+        // Use a named handler to avoid duplicate listeners
+        if (!preview._modalListenerAttached) {
+          preview._modalListenerAttached = true;
+          preview.addEventListener('click', () => openModal(card));
+        }
       }
       return;
     }
 
-    const w = area.getBoundingClientRect().width;
-    const h = area.getBoundingClientRect().height;
-    canvas.width  = w || area.offsetWidth  || 300;
-    canvas.height = h || area.offsetHeight || 400;
+    const rect = area.getBoundingClientRect();
+    const w = rect.width  || area.offsetWidth  || 300;
+    const h = rect.height || area.offsetHeight || 400;
+
+    // If dimensions are still zero, the slide isn't visible yet — retry once after a frame
+    if (w < 10 || h < 10) {
+      requestAnimationFrame(() => setTimeout(_doInit, 80));
+      return;
+    }
+
+    canvas.width  = w;
+    canvas.height = h;
 
     const CIRCUMFERENCE = 2 * Math.PI * 11;
 
@@ -1231,13 +1663,12 @@ function initScratchCard(card, index) {
 
     scratchInstances[card.id] = scratcher;
 
-    const preview = document.getElementById(`reveal-${card.id}`);
     const scratchArea = document.getElementById(`scratch-area-${card.id}`);
-    // Wire tap on the whole area (not just preview) so nothing blocks the click
-    if (scratchArea) {
+    const preview = document.getElementById(`reveal-${card.id}`);
+    if (scratchArea && !scratchArea._modalListenerAttached) {
+      scratchArea._modalListenerAttached = true;
       scratchArea.addEventListener('click', () => {
         if (scratcher.completed) {
-          // Hide canvas so it can't block future taps
           canvas.style.display = 'none';
           openModal(card);
         }
@@ -1246,7 +1677,9 @@ function initScratchCard(card, index) {
     if (preview) {
       preview.style.cursor = 'pointer';
     }
-  }));
+  };
+
+  requestAnimationFrame(() => requestAnimationFrame(_doInit));
 }
 // ============================================================
 //  CARD SCRATCHED — save to Firebase
@@ -1278,10 +1711,6 @@ async function onCardScratched(card, index) {
 
   const wrapper = document.getElementById(`card-wrapper-${card.id}`);
   if (wrapper) wrapper.classList.add('done');
-
-  // Reveal the Add Photo button on the card
-  const addPhotoBtn = document.getElementById(`add-photo-btn-${card.id}`);
-  if (addPhotoBtn) setTimeout(() => addPhotoBtn.classList.add('visible'), 800);
 
   // Polaroid full reveal
   const photoSlot = document.getElementById(`photo-${card.id}`);
@@ -1430,6 +1859,13 @@ function showFinale() {
     finale.classList.remove('hidden');
     finale.classList.add('fade-in');
     document.getElementById('finale-message').textContent = FINALE_MESSAGE;
+
+    // Dynamic next year for secret card
+    const nextYearLabel = document.querySelector('.secret-year');
+    if (nextYearLabel) {
+      nextYearLabel.textContent = `Year ${getAnniversaryYear() + 1}?`;
+    }
+
     Audio.playOnce('chime', 1.0, 0.85);
     haptic([60, 30, 60, 30, 120]);
     finaleParticles = new ParticleSystem('finale-particles', {
@@ -1481,7 +1917,8 @@ function shareStory() {
   CARDS_DATA.forEach((card) => {
     const item = document.createElement('div');
     item.style.cssText = `background:linear-gradient(145deg,#1a1a2e,#0d0d1a);border:1px solid ${card.color}44;border-radius:12px;padding:14px;text-align:center;box-shadow:0 0 20px ${card.glowColor};`;
-    const photo = _photosCache[String(card.id)] || _photosCache[card.id];
+    const cachedPhoto = _photosCache.find(p => p.id === String(card.id) || p.id === card.id);
+    const photo = cachedPhoto?.url || null;
     if (photo) {
       const img = document.createElement('img');
       img.src = photo;
@@ -1545,6 +1982,10 @@ function initSecretCard() {
         Audio.playOnce('chime', 1.0, 0.78);
         setTimeout(() => Audio.playOnce('sparkle', 0.8), 200);
         haptic([80, 40, 80, 40, 200]);
+        
+        if (!confettiEngine) confettiEngine = new Confetti(document.getElementById('confetti-canvas'));
+        confettiEngine.shower(6000, ['#D4A843', '#E05D6E', '#fff', '#8B5CF6']);
+
         if (finaleParticles) {
           finaleParticles.stop();
           finaleParticles = new ParticleSystem('finale-particles', {

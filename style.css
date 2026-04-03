@@ -282,6 +282,27 @@ html, body {
   margin-bottom: 0.8rem;
 }
 
+.game-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.reset-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.05);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s;
+  backdrop-filter: blur(8px);
+}
+.reset-btn svg { width: 16px; height: 16px; }
+.reset-btn:hover { background: rgba(255,50,50,0.1); color: #ff4444; border-color: rgba(255,50,50,0.2); transform: rotate(-30deg); }
+.reset-btn:active { transform: scale(0.9); }
+
 .back-btn {
   display: flex; align-items: center; justify-content: center;
   width: 38px; height: 38px;
@@ -622,6 +643,7 @@ html, body {
   z-index: 0;
   overflow: hidden;
   border-radius: 12px;
+  pointer-events: none; /* never block canvas scratch events */
 }
 
 .card-photo-slot img {
@@ -637,6 +659,7 @@ html, body {
 .card-photo-slot .photo-overlay {
   position: absolute;
   inset: 0;
+  pointer-events: none;
   background: linear-gradient(
     to bottom,
     rgba(0,0,0,0.15) 0%,
@@ -740,45 +763,6 @@ html, body {
 
 .lock-icon { width: 26px; height: 26px; color: var(--text-muted); opacity: 0.6; }
 
-/* ---- ADD PHOTO BUTTON (per card, shown after scratch) ---- */
-.card-add-photo-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.45rem;
-  width: 100%;
-  margin-top: 0.65rem;
-  padding: 0.65em 1em;
-  background: rgba(212,168,67,0.07);
-  border: 1px solid rgba(212,168,67,0.22);
-  border-radius: 100px;
-  color: var(--gold);
-  font-family: 'DM Sans', sans-serif;
-  font-size: 0.72rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  cursor: pointer;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(6px);
-  transition: opacity 0.4s ease, transform 0.4s cubic-bezier(0.34,1.56,0.64,1),
-              background 0.2s, border-color 0.2s;
-  flex-shrink: 0;
-}
-.card-add-photo-btn.visible {
-  opacity: 1;
-  pointer-events: all;
-  transform: translateY(0);
-}
-.card-add-photo-btn:hover {
-  background: rgba(212,168,67,0.16);
-  border-color: rgba(212,168,67,0.45);
-}
-.card-add-photo-btn:active { transform: scale(0.97); }
-.card-add-photo-btn.uploading {
-  opacity: 0.5;
-  pointer-events: none;
-}
 
 .lock-text {
   font-size: 0.6rem;
@@ -991,11 +975,11 @@ html, body {
 }
 
 /* ============================================================
-   BACK CONFIRM DIALOG
+   DIALOGS / MODALS (Restart, Back, Captions)
    ============================================================ */
-#back-dialog {
+#back-dialog, #reset-modal, #caption-modal, #delete-modal, #edit-modal {
   position: fixed; inset: 0;
-  z-index: 300;
+  z-index: 500;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1004,20 +988,21 @@ html, body {
 
 .dialog-backdrop {
   position: absolute; inset: 0;
-  background: rgba(0,0,0,0.8);
+  background: rgba(0,0,0,0.85);
   backdrop-filter: blur(10px);
 }
 
 .dialog-box {
   position: relative; z-index: 2;
   background: linear-gradient(145deg, #1e1e34, #131322);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 22px;
-  padding: 2rem 1.8rem 1.6rem;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 24px;
+  padding: 2.2rem 1.8rem 1.8rem;
   max-width: 320px; width: 100%;
   text-align: center;
   animation: dialogPop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
   box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  margin: auto; /* Force centering */
 }
 
 @keyframes dialogPop { from{opacity:0;transform:scale(0.85)} to{opacity:1;transform:scale(1)} }
@@ -1631,6 +1616,121 @@ html, body {
   gap: 0.55rem;
 }
 
+/* Photo Caption Tag */
+.photo-caption-tag {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 100%);
+  color: var(--text);
+  font-size: 0.6rem;
+  padding: 1.2rem 0.6rem 0.5rem;
+  font-family: 'Cormorant Garamond', serif;
+  font-style: italic;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Photo Card Actions (Edit/Delete in grid) */
+.photo-card-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 0.5rem;
+  opacity: 0;
+  transform: translateY(-5px);
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 10;
+}
+
+.upload-card:hover .photo-card-actions {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.photo-card-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  backdrop-filter: blur(4px);
+}
+
+.photo-card-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.photo-card-btn.edit:hover {
+  background: rgba(212, 168, 67, 0.8);
+  border-color: var(--gold);
+}
+
+.photo-card-btn.delete:hover {
+  background: rgba(255, 50, 50, 0.8);
+  border-color: #ff4444;
+}
+
+.gallery-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.gallery-add-photo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--gold);
+  color: #000;
+  border: none;
+  padding: 0.4rem 0.8rem;
+  border-radius: 100px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform 0.2s, opacity 0.2s;
+  font-family: 'DM Sans', sans-serif;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.gallery-add-photo-btn:hover {
+  transform: scale(1.05);
+  opacity: 0.9;
+}
+
+.gallery-reset-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.gallery-reset-btn:hover {
+  background: rgba(255, 50, 50, 0.15);
+  color: #ff4444;
+  border-color: rgba(255, 50, 50, 0.3);
+}
+
 .gallery-title {
   font-family: 'Playfair Display', serif;
   font-size: 1.1rem;
@@ -1649,7 +1749,7 @@ html, body {
   transition: background 0.2s, color 0.2s, transform 0.1s;
   flex-shrink: 0;
 }
-.gallery-close-btn:hover { background: rgba(255,255,255,0.1); color: var(--text); }
+.gallery-close-btn:hover { background: rgba(255,255,255,0.1); color: var(--text); transform: rotate(90deg); }
 .gallery-close-btn:active { transform: scale(0.9); }
 
 /* ── Tabs ── */
@@ -1838,15 +1938,21 @@ html, body {
 
 /* Empty state placeholder */
 .upload-empty-icon {
-  display: flex; flex-direction: column; align-items: center; gap: 0.35rem;
-  color: rgba(212,168,67,0.3);
+  display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+  color: rgba(212,168,67,0.25);
   pointer-events: none;
+  padding: 1rem;
+  text-align: center;
 }
-.upload-empty-icon svg { width: 28px; height: 28px; }
+.upload-empty-icon svg { width: 32px; height: 32px; opacity: 0.5; transition: opacity 0.2s, color 0.2s; }
 .upload-empty-icon span {
-  font-size: 0.55rem; letter-spacing: 0.12em;
-  text-transform: uppercase; color: rgba(212,168,67,0.25);
+  font-size: 0.52rem; letter-spacing: 0.14em;
+  text-transform: uppercase; color: rgba(212,168,67,0.2);
+  line-height: 1.6;
 }
+/* Hover state on empty upload area */
+.upload-card:hover .upload-empty-icon svg { opacity: 0.75; color: rgba(212,168,67,0.55); }
+.upload-card:hover .upload-photo-area { background: rgba(212,168,67,0.04); }
 
 /* Card label row */
 .upload-card-label {
@@ -1997,3 +2103,233 @@ html, body {
   font-size: 1rem;
   color: var(--text);
 }
+/* ============================================================
+   UPLOAD SUCCESS TOAST
+   ============================================================ */
+#upload-toast {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: linear-gradient(135deg, #1c2a1c, #142014);
+  border: 1px solid rgba(74,155,111,0.45);
+  border-radius: 100px;
+  padding: 0.65em 1.2em;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #4A9B6F;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(74,155,111,0.15);
+  z-index: 9999;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease, transform 0.35s cubic-bezier(0.34,1.56,0.64,1);
+  white-space: nowrap;
+}
+#upload-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  pointer-events: all;
+}
+#upload-toast svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+/* ============================================================
+   UPLOAD CARD — photo thumbnail hover actions
+   ============================================================ */
+.upload-photo-area:has(img) .upload-change-hint {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+}
+.upload-card:hover .upload-change-hint { opacity: 1; }
+.upload-change-hint svg { width: 20px; height: 20px; color: #fff; }
+.upload-change-hint span {
+  font-size: 0.55rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.8);
+}
+
+/* ============================================================
+   GALLERY PHOTOS TAB — unlocked card has clickable photo
+   ============================================================ */
+/* Lightbox Actions */
+.lightbox-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+.lightbox-actions {
+  display: flex;
+  gap: 0.8rem;
+}
+
+.lightbox-action-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.lightbox-action-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  transform: scale(1.05);
+}
+
+.lightbox-action-btn.edit:hover {
+  background: rgba(212, 168, 67, 0.2);
+  color: var(--gold);
+  border-color: rgba(212, 168, 67, 0.3);
+}
+
+.lightbox-action-btn.delete:hover {
+  background: rgba(255, 50, 50, 0.2);
+  color: #ff4444;
+  border-color: rgba(255, 50, 50, 0.3);
+}
+
+.lightbox-action-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Lightbox Modal Structure */
+.lightbox-modal {
+  position: relative;
+  z-index: 2;
+  background: linear-gradient(145deg, #1e1e34, #131322);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+  padding: 1.5rem;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  animation: dialogPop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+.lightbox-img {
+  max-width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+  border-radius: 12px;
+  margin-bottom: 1rem;
+}
+
+.lightbox-caption {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 1.1rem;
+  font-style: italic;
+  color: var(--text);
+  text-align: center;
+  padding: 0.5rem;
+}
+
+.lightbox-info {
+  text-align: left;
+}
+
+.lightbox-year {
+  font-size: 0.65rem;
+  color: var(--gold);
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  margin-bottom: 0.2rem;
+}
+
+.gallery-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--gold);
+  color: #000;
+  font-size: 0.6rem;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 100px;
+  margin-left: 4px;
+}
+
+/* Photo Delete Button */
+.photo-delete-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255, 50, 50, 0.85);
+  color: #fff;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 10;
+  backdrop-filter: blur(4px);
+}
+
+.upload-card:hover .photo-delete-btn {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.photo-delete-btn:hover {
+  background: #ff3333;
+  transform: scale(1.1) !important;
+}
+
+.photo-delete-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dialog-box input {
+  width: 100%;
+  padding: 0.8rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(0,0,0,0.3);
+  color: #fff;
+  margin-bottom: 1.5rem;
+  font-family: inherit;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.dialog-box input:focus {
+  outline: none;
+  border-color: var(--gold);
+  background: rgba(0,0,0,0.5);
+  box-shadow: 0 0 20px rgba(212,168,67,0.15);
+}
+
+.hidden { display: none !important; }

@@ -41,7 +41,7 @@ const CARDS_DATA = [
     color: "#4A7FB5",
     glowColor: "rgba(74, 127, 181, 0.4)",
     title: "What I Notice About You",
-    message: "It's the little things. The way you get excited over the smallest stuff and your whole face changes. The way you say my name. The random things you say that somehow always make me smile. You don't even realize how much of my day you take up — and I wouldn't have it any other way.",
+    message: "It's the little things. The way you get excited over the smallest stuff and your whole face changes. The way you say our callsign. The random things you say that somehow always make me smile. You don't even realize how much of my day you take up — and I wouldn't have it any other way.",
     scratchColor: "#355E8A",
     photo: "photos/3pic.jpg"
   },
