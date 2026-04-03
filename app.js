@@ -737,10 +737,9 @@ async function handleCaptionSubmit(caption) {
   const file = _pendingFile;
   _pendingFile = null;
 
-  // Grab button + saved HTML right now before anything mutates it
   const headerBtn    = document.getElementById('gallery-add-photo-header-btn');
   const savedBtnHTML = _originalHeaderContent;
-  _originalHeaderContent = ''; // clear it immediately so it can't be reused
+  _originalHeaderContent = '';
 
   if (headerBtn) {
     headerBtn.innerHTML = `<div class="upload-spinner"></div><span>Adding…</span>`;
@@ -748,52 +747,45 @@ async function handleCaptionSubmit(caption) {
   }
 
   try {
-    // 1. Upload image to ImgBB
+    // 1. Upload to ImgBB — this is the only thing we wait for
     const url = await uploadToImgBB(file);
 
-    // 2. Show in UI immediately with a temp ID
+    // 2. Add to _photosCache immediately with a temp ID
     const tempId   = 'temp_' + Date.now();
     const newPhoto = { id: tempId, url, caption: caption || '', timestamp: Date.now() };
     _photosCache.unshift(newPhoto);
 
-    // 3. AWAIT the full DB save — this ensures Firestore write finishes BEFORE
-    //    any background sync runs and reads back from Firestore
-    if (window.DB) {
-      try {
-        const resolvedId = await window.DB.savePhotoToAlbum(url, caption || '');
-        if (resolvedId && resolvedId !== tempId) {
-          const idx = _photosCache.findIndex(p => p.id === tempId);
-          if (idx !== -1) _photosCache[idx].id = resolvedId;
-        }
-      } catch(e) {
-        console.error('[Upload] Firestore save failed:', e);
-      }
+    // 3. Restore button & show UI RIGHT NOW — don't wait for Firestore
+    if (headerBtn) {
+      headerBtn.innerHTML = savedBtnHTML || `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Add Photos`;
+      headerBtn.disabled = false;
     }
 
-    // 4. Update UI
     switchGalleryTab('photos');
     renderUploadGrid();
     updateGalleryBadge();
+    showUploadToast();
+    haptic([20, 10, 20]);
 
     const uploadGrid = document.getElementById('upload-grid');
     if (uploadGrid) uploadGrid.scrollTop = 0;
     const galleryPane = document.getElementById('pane-photos');
     if (galleryPane) galleryPane.scrollTop = 0;
 
-    const gallery = document.getElementById('gallery-screen');
-    if (gallery && !gallery.classList.contains('open')) {
-      openGallery();
-      setTimeout(() => switchGalleryTab('photos'), 100);
+    // 4. Save to Firestore in background — doesn't block the UI at all
+    if (window.DB) {
+      window.DB.savePhotoToAlbum(url, caption || '').then(resolvedId => {
+        if (resolvedId && resolvedId !== tempId) {
+          const idx = _photosCache.findIndex(p => p.id === tempId);
+          if (idx !== -1) _photosCache[idx].id = resolvedId;
+        }
+      }).catch(e => console.error('[Upload] Firestore save failed:', e));
     }
 
-    showUploadToast();
-    haptic([20, 10, 20]);
-
   } catch(err) {
-    console.error('[Upload] failed:', err);
+    console.error('[Upload] ImgBB failed:', err);
     alert('Photo upload failed: ' + err.message);
-  } finally {
-    // Restore button — always, even on error
+    // Restore button on error
     if (headerBtn) {
       headerBtn.innerHTML = savedBtnHTML || `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Add Photos`;
       headerBtn.disabled = false;

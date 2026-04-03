@@ -87,10 +87,12 @@
           photos.unshift(newPhoto);
           writeCache(CACHE_KEY_PHOTOS, photos);
 
-          if (!_db) return tempId;
+          if (!_db) { console.warn('[DB] savePhotoToAlbum: no Firestore instance, saved to cache only'); return tempId; }
           try {
             const { addDoc, collection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+            console.log('[DB] Writing photo to Firestore...');
             const docRef = await addDoc(collection(_db, 'album'), { url, caption, timestamp: serverTimestamp() });
+            console.log('[DB] Photo saved to Firestore! ID:', docRef.id);
             // Replace temp ID with the real Firestore document ID in cache
             const cached = readCache(CACHE_KEY_PHOTOS, []);
             const idx = cached.findIndex(p => p.id === tempId);
@@ -104,7 +106,7 @@
             }
             return docRef.id;
           } catch(e) {
-            console.error('DB.savePhotoToAlbum remote:', e);
+            console.error('[DB] savePhotoToAlbum Firestore FAILED:', e.code, e.message);
             return tempId;
           }
         },
@@ -156,9 +158,7 @@
           _db = dbInstance;
           console.log('[DB] Firestore connected — background sync starting');
           this._refreshProgress().catch(() => {});
-          // Don't call _refreshPhotos() immediately here — it races with in-flight uploads
-          // and overwrites _photosCache with stale data. The app's _syncFirestoreInBackground
-          // handles photo sync safely after uploads complete.
+          // Do NOT call _refreshPhotos here — it races with in-flight uploads
           window.dispatchEvent(new Event('firestore-ready'));
         },
 
@@ -177,7 +177,7 @@
               return data;
             }
             return null;
-          } catch(e) { return null; }  // offline — use cache silently
+          } catch(e) { console.warn('_fetchProgressDirect:', e); return null; }
         },
         async _fetchPhotosDirect() {
           if (!_db) return null;
@@ -189,7 +189,7 @@
             snaps.forEach(d => { result.push({ id: d.id, ...d.data() }); });
             writeCache(CACHE_KEY_PHOTOS, result);
             return result;
-          } catch(e) { return null; }  // offline — use cache silently
+          } catch(e) { console.warn('_fetchPhotosDirect:', e); return null; }
         }
       };
 
