@@ -156,8 +156,9 @@
           _db = dbInstance;
           console.log('[DB] Firestore connected — background sync starting');
           this._refreshProgress().catch(() => {});
-          this._refreshPhotos().catch(() => {});
-          // Notify bootstrap that Firestore is ready for direct fetches
+          // Don't call _refreshPhotos() immediately here — it races with in-flight uploads
+          // and overwrites _photosCache with stale data. The app's _syncFirestoreInBackground
+          // handles photo sync safely after uploads complete.
           window.dispatchEvent(new Event('firestore-ready'));
         },
 

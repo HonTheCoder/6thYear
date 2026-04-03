@@ -57,8 +57,10 @@ window._onPhotoIdResolved = (tempId, realId) => {
 };
 // Called after a background Firestore sync so in-memory IDs are always real
 window._onPhotosRefreshed = (freshPhotos) => {
+  // NEVER replace _photosCache with fewer photos than we have in memory.
+  // If Firestore returns 0, the write hasn't propagated yet — keep what we have.
+  if (!Array.isArray(freshPhotos) || freshPhotos.length < _photosCache.length) return;
   _photosCache = freshPhotos;
-  // Re-render the upload grid if the gallery is currently open
   const gallery = document.getElementById('gallery-screen');
   if (gallery && gallery.classList.contains('open')) {
     renderUploadGrid();
