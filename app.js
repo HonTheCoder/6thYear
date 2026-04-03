@@ -845,26 +845,25 @@ let _currentGalleryTab = 'messages';
 function openGallery() {
   const gallery = document.getElementById('gallery-screen');
 
-  // Don't call getAllPhotos() here — it fires a background _refreshPhotos()
-  // that can race with a just-uploaded photo and wipe it from _photosCache.
-  // _photosCache is already kept up-to-date by handleCaptionSubmit and handleConfirmDelete.
-  // Only do a passive localStorage read to catch any photos written by the other device.
-  try {
-    const raw = localStorage.getItem('ann_photos_v1');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length >= _photosCache.length) {
-        _photosCache = parsed;
-      }
-    }
-  } catch(e) {}
-
+  // Show gallery immediately with whatever we have in memory
   renderGalleryMessages();
   renderUploadGrid();
   updateGalleryBadge();
   gallery.style.display = 'flex';
   gallery.style.pointerEvents = 'all';
   requestAnimationFrame(() => requestAnimationFrame(() => gallery.classList.add('open')));
+
+  // Then fetch fresh photos from Firestore in the background
+  // so photos uploaded on another device show up without a full page refresh
+  if (window.DB && window.DB._isFirestoreReady && window.DB._isFirestoreReady()) {
+    window.DB._fetchPhotosDirect().then(freshPhotos => {
+      if (freshPhotos && Array.isArray(freshPhotos)) {
+        _photosCache = freshPhotos;
+        renderUploadGrid();
+        updateGalleryBadge();
+      }
+    }).catch(() => {});
+  }
 }
 
 function closeGallery() {
