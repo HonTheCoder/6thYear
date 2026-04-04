@@ -842,6 +842,7 @@ function applyPhotoToCard(cardId, url) {
 //  GALLERY SCREEN — two tabs: Messages | Our Photos
 // ============================================================
 let _currentGalleryTab = 'messages';
+let _galleryPollTimer  = null;
 
 function openGallery() {
   const gallery = document.getElementById('gallery-screen');
@@ -854,28 +855,37 @@ function openGallery() {
   gallery.style.pointerEvents = 'all';
   requestAnimationFrame(() => requestAnimationFrame(() => gallery.classList.add('open')));
 
-  // Then fetch fresh photos from Firestore in the background
-  // so photos uploaded on another device show up without a full page refresh
-  if (window.DB && window.DB._isFirestoreReady && window.DB._isFirestoreReady()) {
-    window.DB._fetchPhotosDirect().then(freshPhotos => {
-      if (freshPhotos && Array.isArray(freshPhotos) && freshPhotos.length > 0) {
-        _photosCache = freshPhotos;
-        renderUploadGrid();
-        updateGalleryBadge();
-      }
-    }).catch(() => {});
-  }
+  // Initial fetch
+  _fetchAndRefreshGallery();
+
+  // Live poll every 5 seconds while gallery is open
+  _galleryPollTimer = setInterval(_fetchAndRefreshGallery, 5000);
+}
+
+function _fetchAndRefreshGallery() {
+  if (!window.DB || !window.DB._isFirestoreReady || !window.DB._isFirestoreReady()) return;
+  window.DB._fetchPhotosDirect().then(freshPhotos => {
+    if (!freshPhotos || !Array.isArray(freshPhotos)) return;
+    // Only update if there are changes
+    if (freshPhotos.length !== _photosCache.length ||
+        freshPhotos.some((p, i) => p.id !== (_photosCache[i]?.id))) {
+      _photosCache = freshPhotos;
+      renderUploadGrid();
+      updateGalleryBadge();
+    }
+  }).catch(() => {});
 }
 
 function closeGallery() {
   const gallery = document.getElementById('gallery-screen');
   gallery.classList.remove('open');
   gallery.style.pointerEvents = 'none';
+
+  // Stop live polling
+  if (_galleryPollTimer) { clearInterval(_galleryPollTimer); _galleryPollTimer = null; }
   
-  // Force a redraw and clear any potential active pointer states
   setTimeout(() => { 
     gallery.style.display = 'none';
-    // Re-sync progress and UI just in case
     updateProgress();
   }, 400);
 }
@@ -1599,11 +1609,13 @@ function initScratchCard(card, index) {
       const preview = document.getElementById(`reveal-${card.id}`);
       if (preview) {
         preview.style.cursor = 'pointer';
-        // Use a named handler to avoid duplicate listeners
-        if (!preview._modalListenerAttached) {
-          preview._modalListenerAttached = true;
-          preview.addEventListener('click', () => openModal(card));
-        }
+        preview.style.pointerEvents = 'auto';
+      }
+      // Attach to the whole scratch-area so the full card is tappable
+      if (!area._modalListenerAttached) {
+        area._modalListenerAttached = true;
+        area.style.cursor = 'pointer';
+        area.addEventListener('click', () => openModal(card));
       }
       return;
     }
