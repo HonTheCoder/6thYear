@@ -1,7 +1,7 @@
 // ============================================================
 //  APP — MAIN GAME CONTROLLER
 //  • Firebase Firestore for progress + photo URLs (shared across devices)
-//  • ImgBB for free image hosting (upload → get URL → save to Firestore)
+//  • Cloudinary for image hosting (permanent URLs, free tier, no expiry)
 //  • Auto-play piano music on first user interaction
 //  • Anniversary date display (April 4 — counts days since / until)
 //  • Typewriter modal messages
@@ -13,8 +13,9 @@
 //  • Gallery page for album photos
 // ============================================================
 
-// ── ImgBB API key ──────────────────────────────────────────
-const IMGBB_API_KEY = 'fb54f76ee4dd21a3d5d4de19020c2d64';
+// ── Cloudinary config ───────────────────────────────────────
+const CLOUDINARY_CLOUD_NAME    = 'dtou9fm83';
+const CLOUDINARY_UPLOAD_PRESET = 'anniversary_upload';
 
 // ── Anniversary date (April 4, 2020) ───────────────────────────
 const START_YEAR        = 2020;
@@ -430,18 +431,21 @@ function typewriterEffect(el, text, speed = 22) {
 // ============================================================
 //  IMGBB UPLOAD — returns a hosted URL
 // ============================================================
-async function uploadToImgBB(file) {
+// Upload image file to Cloudinary (unsigned upload).
+// Returns a permanent URL that never expires.
+async function uploadToCloudinary(file) {
   const formData = new FormData();
-  formData.append('image', file);
+  formData.append('file',         file);
+  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
 
-  const res = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, {
-    method: 'POST',
-    body:   formData,
-  });
-  if (!res.ok) throw new Error(`ImgBB upload failed: ${res.status}`);
+  const res = await fetch(
+    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
+    { method: 'POST', body: formData }
+  );
+  if (!res.ok) throw new Error(`Cloudinary upload failed: ${res.status}`);
   const json = await res.json();
-  if (!json.success) throw new Error(json.error?.message || 'ImgBB error');
-  return json.data.url; // permanent image URL
+  if (!json.secure_url) throw new Error(json.error?.message || 'Cloudinary error');
+  return json.secure_url; // permanent HTTPS image URL
 }
 
 // ============================================================
@@ -742,13 +746,13 @@ async function handleCaptionSubmit(caption) {
   _originalHeaderContent = '';
 
   if (headerBtn) {
-    headerBtn.innerHTML = `<div class="upload-spinner"></div><span>Adding…</span>`;
+    headerBtn.innerHTML = `<div class="upload-spinner"></div><span>Uploading…</span>`;
     headerBtn.disabled  = true;
   }
 
   try {
-    // 1. Upload to ImgBB — this is the only thing we wait for
-    const url = await uploadToImgBB(file);
+    // 1. Upload to Cloudinary — permanent URL, never expires
+    const url = await uploadToCloudinary(file);
 
     // 2. Add to _photosCache immediately with a temp ID
     const tempId   = 'temp_' + Date.now();
@@ -783,7 +787,7 @@ async function handleCaptionSubmit(caption) {
     }
 
   } catch(err) {
-    console.error('[Upload] ImgBB failed:', err);
+    console.error('[Upload] Cloudinary failed:', err);
     alert('Photo upload failed: ' + err.message);
     // Restore button on error
     if (headerBtn) {
